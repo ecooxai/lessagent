@@ -1,0 +1,22 @@
+const {JSDOM}=require('jsdom');
+const fs=require('fs');const assert=require('node:assert/strict');
+const dom=new JSDOM('<body></body>',{runScripts:'outside-only'}),w=dom.window;
+const errors=[];let chosen;
+w.el=(tag,cls,text)=>{const n=w.document.createElement(tag);n.className=cls||'';if(text!==undefined)n.textContent=text;return n;};
+w.notice=e=>errors.push(e);w.guard=fn=>(...args)=>Promise.resolve(fn(...args)).catch(w.notice);
+w.button=(text,fn,cls)=>{const n=w.el('button',cls,text);n.onclick=w.guard(fn);return n;};w.iconButton=(text,title,fn)=>w.button(text,fn);
+const dirs=['.config','Documents','Downloads','project'];
+w.act=async(name,{path})=>{assert.equal(name,'browse');if(path==='~')path='/home/test';if(path==='/home/test')return {path,entries:dirs.map(name=>({name,path:path+'/'+name,directory:true}))};if(path==='/home/test/Documents')return {path,entries:[]};throw Error('Folder not found');};
+const source=fs.readFileSync(process.cwd()+'/web/app.js','utf8');w.eval(source.slice(source.indexOf('function createFileBrowser(options)')));
+const pause=ms=>new Promise(r=>setTimeout(r,ms));
+(async()=>{try{
+const root=w.createFileBrowser({root:'/home/test',picker:true,onChoose:path=>{chosen=path;}});w.document.body.append(root);await pause(10);
+assert.deepEqual([...root.querySelectorAll('.tree-row')].map(r=>r.dataset.path),['/home/test/Documents','/home/test/Downloads','/home/test/project']);
+[...root.querySelectorAll('button')].find(b=>b.textContent==='Show hidden folders').click();
+assert.equal(root.querySelectorAll('.tree-row').length,4);assert.equal([...root.querySelectorAll('.tree-row')].at(-1).dataset.path,'/home/test/.config');
+const input=root.querySelector('input');input.focus();input.value='/home/test/dcm';input.dispatchEvent(new w.Event('input'));await pause(200);
+assert.equal(root.querySelector('.path-suggestions button').textContent,'/home/test/Documents');root.querySelector('.path-suggestions button').click();await pause(10);
+assert.equal(input.value,'/home/test/Documents');[...root.querySelectorAll('button')].find(b=>b.textContent==='Open this folder').click();await pause(10);assert.equal(chosen,'/home/test/Documents');
+input.value='~';input.dispatchEvent(new w.KeyboardEvent('keydown',{key:'Enter'}));await pause(10);assert.equal(input.value,'/home/test');
+assert.equal(errors.length,0);console.log('PASS: workspace picker regular/hidden folders, fuzzy suggestions, path navigation, workspace selection');
+}finally{w.close();}})().catch(e=>{console.error(e);process.exitCode=1;});

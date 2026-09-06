@@ -1,0 +1,52 @@
+<!doctype html>
+<html lang="en">
+  <head>
+    <meta charset="utf-8" />
+    <meta name="viewport" content="width=device-width,initial-scale=1" />
+    <title>Lessagent</title>
+    <link rel="stylesheet" href="/style.css" />
+    <script src="/app.js" defer></script>
+  </head>
+  <body>
+    <dialog id="login-dialog" aria-labelledby="login-title">
+      <form id="login-form">
+        <h2 id="login-title">Sign in to Lessagent</h2>
+        <label for="login-password">Password</label>
+        <input id="login-password" type="password" autocomplete="current-password" required />
+        <p class="login-help">Set or change your password in a terminal:<br /><code>lessagent --passwd 'your-password'</code><br />The password is saved for future starts. Without a configured password, local browser access needs no token. For access from another device, set a password on the server or use an access token.</p>
+        <p id="login-error" role="alert"></p>
+        <button class="primary" type="submit">Sign in</button>
+      </form>
+    </dialog>
+    <aside id="sidebar">
+      <div class="sidebar-tools"><span title="Workspaces" aria-label="Workspaces">▱</span><button id="add-workspace" title="Open folder" aria-label="Open folder">＋</button></div>
+      <div id="workspaces"></div>
+      <div class="sidebar-bottom">
+        <button id="context" title="Project context"></button>
+        <div class="sidebar-tools"><button id="settings-nav" title="Settings" aria-label="Settings">⚙</button><button id="logs-nav" title="Backend logs" aria-label="Backend logs">≡</button><span id="connection" title="Connecting…">○</span></div>
+      </div>
+    </aside>
+    <main>
+      <header class="workspace-heading"><span id="workspace-title"></span></header>
+      <nav id="tabs" aria-label="Workspace tabs"></nav>
+      <div id="notice" role="status" hidden></div>
+      <section id="view"></section>
+      <footer>
+        <span id="provider-label"></span
+        ><span></span>
+      </footer>
+    </main>
+    <div id="menu" class="popup-menu" hidden></div>
+    <dialog id="dialog">
+      <form method="dialog">
+        <h2 id="dialog-title"></h2>
+        <label id="dialog-label" for="dialog-value"></label
+        ><input id="dialog-value" autocomplete="off" required />
+        <div class="dialog-actions">
+          <button value="cancel" formnovalidate>Cancel</button
+          ><button value="ok" class="primary">Continue</button>
+        </div>
+      </form>
+    </dialog>
+  </body>
+</html>

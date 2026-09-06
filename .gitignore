@@ -1,0 +1,6 @@
+/target/
+/agent/context/
+/agent/knowledge/done/
+/agent/captures/
+.env
+.DS_Store
