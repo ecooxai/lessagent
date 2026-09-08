@@ -1,0 +1,28 @@
+const {JSDOM}=require('jsdom');
+const fs=require('fs'),assert=require('node:assert/strict');
+const w=new JSDOM('',{runScripts:'outside-only'}).window;
+const source=fs.readFileSync('web/app.js','utf8');
+new (require('node:vm').Script)(source);
+w.structuredClone=structuredClone;
+w.selected='project';
+w.state={workspaces:[{id:'project',ui:{active:'agent-new',tabs:[{id:'chat',kind:'chat'},{id:'agent-new',kind:'chat'},{id:'files',kind:'files'}]}}]};
+w.workspace=()=>w.state.workspaces[0];
+const writes=[],releases=[];
+w.act=async(name,args)=>{writes.push(args);await new Promise(r=>releases.push(r));};
+w.eval(source.slice(source.indexOf('const localTabState'),source.indexOf('async function select(')));
+const tick=()=>new Promise(r=>setImmediate(r));
+(async()=>{try{
+const stale=structuredClone(w.state);
+stale.workspaces[0].ui.active='chat';
+const first=w.saveUi();await tick();
+w.workspace().ui.active='files';const second=w.saveUi();
+w.workspace().ui.active='agent-new';const third=w.saveUi();
+w.state=w.retainLocalTabs(stale);
+assert.equal(w.workspace().ui.active,'agent-new');
+assert.equal(writes.length,1);
+releases.shift()();await first;await tick();assert.equal(writes[1].ui.active,'files');
+releases.shift()();await second;await tick();assert.equal(writes[2].ui.active,'agent-new');
+releases.shift()();await third;
+assert.equal(w.retainLocalTabs(stale).workspaces[0].ui.active,'agent-new');
+console.log('PASS: stale polling preserves Agent tab; rapid tab saves remain ordered');
+}finally{w.close();}})().catch(e=>{console.error(e);process.exitCode=1;});

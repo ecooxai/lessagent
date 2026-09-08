@@ -50,7 +50,7 @@ async fn run() -> Result<()> {
     let command = args.first().map(String::as_str).unwrap_or("launch");
     if ["help", "--help", "-h"].contains(&command) {
         println!(
-            "Lessagent — persistent local computer agent\n\n  lessagent [start|tui|restart] [--port 3210] [--data-dir DIR] [--passwd PASSWORD]\n  lessagent stop [--port 3210] [--data-dir DIR]\n  lessagent serve [--port 3210] [--data-dir DIR] [--passwd PASSWORD]\n  lessagent open PATH\n  lessagent run PATH PROMPT...\n  lessagent status\n  lessagent models codex|openai|gemini|claude\n  lessagent tool WORKSPACE_ID NAME JSON_ARGUMENTS\n  lessagent mcp\n\nRun lessagent to start and choose CLI, browser UI, or neither. Clients use the same --port and --data-dir (or LESSAGENT_PORT / LESSAGENT_DATA_DIR). API keys: OPENAI_API_KEY, ANTHROPIC_API_KEY, GEMINI_API_KEY; Codex: run codex login first."
+            "Lessagent — persistent local computer agent\n\n  lessagent [start|tui|restart] [--port 3210] [--data-dir DIR] [--passwd PASSWORD]\n  lessagent stop [--port 3210] [--data-dir DIR]\n  lessagent serve [--port 3210] [--data-dir DIR] [--passwd PASSWORD]\n  lessagent open PATH\n  lessagent run PATH PROMPT...\n  lessagent status\n  lessagent models codex|openai|gemini|claude\n  lessagent tool WORKSPACE_ID NAME JSON_ARGUMENTS\n  lessagent mcp\n\nRun lessagent to start and choose CLI, browser UI, or neither. Clients use the same --port and --data-dir (or LESSAGENT_PORT / LESSAGENT_DATA_DIR). API keys: OPENAI_API_KEY, ANTHROPIC_API_KEY, GEMINI_API_KEY. Codex uses codex login file credentials for direct HTTP requests."
         );
         return Ok(());
     }
@@ -193,6 +193,7 @@ async fn run() -> Result<()> {
                         .ok_or_else(|| err("Job disappeared"))?;
                     if job["status"] != "running" {
                         println!("{}", job["output"].as_str().unwrap_or(""));
+                        eprintln!("{}", lessagent::provider::metrics(job));
                         if job["status"] != "completed" {
                             return Err(err(format!("Job {}", job["status"])));
                         }

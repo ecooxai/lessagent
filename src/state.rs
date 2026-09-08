@@ -13,6 +13,9 @@ pub struct Settings {
     pub provider: String,
     pub model: String,
     pub max_steps: usize,
+    pub thinking: String,
+    pub quality_threshold: f64,
+    pub compact_model: String,
     pub computer_enabled: bool,
     pub context_ignores: Vec<String>,
 }
@@ -22,6 +25,9 @@ impl Default for Settings {
             provider: "codex".into(),
             model: String::new(),
             max_steps: 24,
+            thinking: "medium".into(),
+            quality_threshold: 9.,
+            compact_model: "gpt-5.6-luna".into(),
             computer_enabled: false,
             context_ignores: crate::context::default_ignores(),
         }
@@ -32,6 +38,10 @@ pub struct Message {
     pub role: String,
     pub text: String,
     pub at: u64,
+    #[serde(default)]
+    pub job_id: Option<String>,
+    #[serde(default = "default_session")]
+    pub session: String,
 }
 #[derive(Clone, Serialize, Deserialize)]
 pub struct Workspace {
@@ -40,19 +50,37 @@ pub struct Workspace {
     pub name: String,
     pub mode: String,
     #[serde(default)]
+    pub closed: bool,
+    #[serde(default)]
     pub messages: Vec<Message>,
     #[serde(default)]
     pub ui: Value,
 }
+pub fn default_session() -> String {
+    "chat".into()
+}
+
 #[derive(Clone, Serialize, Deserialize)]
 pub struct Job {
     pub id: String,
     pub workspace: String,
+    #[serde(default = "default_session")]
+    pub session: String,
     pub status: String,
     pub prompt: String,
     pub output: String,
     pub events: Vec<Value>,
     pub started: u64,
+    #[serde(default)]
+    pub usage: Option<crate::provider::Usage>,
+    #[serde(default)]
+    pub elapsed_ms: Option<u64>,
+    #[serde(default)]
+    pub usage_incomplete: bool,
+    #[serde(default)]
+    pub score: Option<f64>,
+    #[serde(default)]
+    pub thinking: String,
 }
 #[derive(Default, Serialize, Deserialize)]
 #[serde(default)]
@@ -96,6 +124,10 @@ impl App {
             Err(e) => return Err(e.into()),
         };
         for job in &mut disk.jobs {
+            for event in &mut job.events {
+                archive_event(&dir, event)?;
+            }
+
             if job.status == "running" {
                 job.status = "interrupted".into();
             }
@@ -171,8 +203,34 @@ impl App {
             return Err(err("Workspace must be a directory"));
         }
         let mut disk = self.disk.lock().unwrap();
-        if let Some(w) = disk.workspaces.iter().find(|w| w.path == path) {
-            return Ok(w.clone());
+        if let Some(w) = disk.workspaces.iter_mut().find(|w| w.path == path) {
+            w.closed = false;
+            if !w.ui["tabs"].is_array() {
+                w.ui =
+                    json!({"tabs":[{"id":"chat","kind":"chat","title":"Agent"}],"active":"chat"});
+            }
+            for (kind, title) in [
+                ("terminals", "Terminal"),
+                ("history", "History"),
+                ("git", "Git"),
+            ] {
+                let tabs = w.ui["tabs"].as_array_mut().unwrap();
+                if !tabs.iter().any(|t| t["kind"] == kind) {
+                    tabs.push(json!({"id":kind,"kind":kind,"title":title}));
+                }
+            }
+            if !self
+                .terminals
+                .summaries()
+                .iter()
+                .any(|t| t["workspace"] == w.id && t["exited"] == false)
+            {
+                self.terminals.spawn(&w.id, &w.path, None)?;
+            }
+            let w = w.clone();
+            drop(disk);
+            self.save()?;
+            return Ok(w);
         }
         let w = Workspace {
             id: crate::id(),
@@ -183,9 +241,11 @@ impl App {
                 .into(),
             path,
             mode: "normal".into(),
+            closed: false,
             messages: vec![],
-            ui: json!({"tabs":[{"id":"chat","kind":"chat","title":"Agent"}],"active":"chat"}),
+            ui: json!({"tabs":[{"id":"chat","kind":"chat","title":"Agent"},{"id":"terminals","kind":"terminals","title":"Terminal"},{"id":"history","kind":"history","title":"History"},{"id":"git","kind":"git","title":"Git"}],"active":"chat"}),
         };
+        self.terminals.spawn(&w.id, &w.path, None)?;
         disk.workspaces.push(w.clone());
         drop(disk);
         self.save()?;
@@ -199,12 +259,16 @@ impl App {
             disk.logs.remove(0);
         }
     }
-    pub fn event(&self, job: &str, event: Value) {
+    pub fn event(&self, job: &str, mut event: Value) {
+        // Preserve the original event in memory if archiving fails.
+        let _ = archive_event(&self.dir, &mut event);
         let mut disk = self.disk.lock().unwrap();
         if let Some(j) = disk.jobs.iter_mut().find(|j| j.id == job) {
             j.events.push(event);
-            if j.events.len() > 200 {
-                j.events.remove(0);
+            if j.events.len() > 200
+                && let Some(index) = j.events.iter().position(|e| e["kind"] != "request")
+            {
+                j.events.remove(index);
             }
         }
         drop(disk);
@@ -255,4 +319,54 @@ pub fn atomic_write(path: &Path, bytes: &[u8]) -> Result<()> {
         let _ = std::fs::remove_file(tmp);
     }
     result
+}
+
+// Large tool responses belong on disk, not in every UI poll or state clone.
+fn archive_event(dir: &Path, event: &mut Value) -> Result<()> {
+    if event.get("archived_event").is_some() {
+        return Ok(());
+    }
+    let bytes = serde_json::to_vec(event)?;
+    if bytes.len() <= 16 * 1024 {
+        return Ok(());
+    }
+    let id = crate::id();
+    let archive = dir.join("events");
+    std::fs::create_dir_all(&archive)?;
+    atomic_write(&archive.join(format!("{id}.json")), &bytes)?;
+    let mut summary = json!({"archived_event":id,"bytes":bytes.len()});
+    for key in ["kind", "step", "name", "provider", "model", "language"] {
+        if let Some(value) = event.get(key) {
+            summary[key] = value.clone();
+        }
+    }
+    *event = summary;
+    Ok(())
+}
+
+#[cfg(test)]
+mod archive_tests {
+    use super::*;
+    #[test]
+    fn large_events_are_preserved_on_disk_and_migration_is_idempotent() {
+        let dir = std::env::temp_dir().join(crate::id());
+        let original =
+            json!({"kind":"light_result","step":2,"result":{"stdout":"x".repeat(100_000)}});
+        let mut event = original.clone();
+        archive_event(&dir, &mut event).unwrap();
+        assert_eq!(event["kind"], "light_result");
+        assert!(serde_json::to_vec(&event).unwrap().len() < 256);
+        let path = dir.join("events").join(format!(
+            "{}.json",
+            event["archived_event"].as_str().unwrap()
+        ));
+        assert_eq!(
+            serde_json::from_slice::<Value>(&std::fs::read(path).unwrap()).unwrap(),
+            original
+        );
+        let summary = event.clone();
+        archive_event(&dir, &mut event).unwrap();
+        assert_eq!(summary, event);
+        std::fs::remove_dir_all(dir).unwrap();
+    }
 }

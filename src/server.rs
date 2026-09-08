@@ -1,7 +1,7 @@
 use crate::{Result, err, state::App, tools::string};
 use axum::{
     Json, Router,
-    extract::{ConnectInfo, DefaultBodyLimit, Path, Request, State},
+    extract::{ConnectInfo, DefaultBodyLimit, Path, Query, Request, State},
     http::{StatusCode, header},
     middleware::{self, Next},
     response::{IntoResponse, Response},
@@ -174,9 +174,24 @@ async fn set_password(State(app): State<Arc<App>>, Json(body): Json<Value>) -> A
         .map_err(|e| err(e.to_string()))??;
     Ok(Json(json!({"ok":true})))
 }
-async fn state(State(app): State<Arc<App>>) -> Json<Value> {
-    let mut v = serde_json::to_value(&*app.disk.lock().unwrap()).unwrap();
-    v["terminals"] = json!(app.terminals.list());
+async fn state(
+    State(app): State<Arc<App>>,
+    Query(query): Query<std::collections::HashMap<String, String>>,
+) -> Json<Value> {
+    let mut v = {
+        let disk = app.disk.lock().unwrap();
+        if query.get("terminal").is_some_and(|v| v == "true") {
+            let workspaces: Vec<_> = disk.workspaces.iter().map(|w| json!({"id":w.id,"name":w.name,"path":w.path,"mode":w.mode,"closed":w.closed,"ui":w.ui})).collect();
+            json!({"partial":true,"workspaces":workspaces,"settings":disk.settings,"ui":disk.ui})
+        } else {
+            serde_json::to_value(&*disk).unwrap()
+        }
+    };
+    v["terminals"] = json!(if query.get("summary").is_some_and(|v| v == "true") {
+        app.terminals.summaries()
+    } else {
+        app.terminals.list()
+    });
     v["keys"] = json!({"openai":app.key("openai").is_ok(),"claude":app.key("claude").is_ok(),"gemini":app.key("gemini").is_ok()});
     v["computer"] = crate::computer::capabilities();
     v["context_ignore_defaults"] = json!(crate::context::default_ignores());
@@ -187,19 +202,53 @@ async fn models(State(app): State<Arc<App>>, Path(provider): Path<String>) -> Ap
 }
 async fn inventory(State(app): State<Arc<App>>, Path(id): Path<String>) -> Api {
     let w = app.workspace(&id)?;
-    let ignores = app.disk.lock().unwrap().settings.context_ignores.clone();
+    let settings = app.disk.lock().unwrap().settings.clone();
+    let ignores = settings.context_ignores;
+    let model = if settings.model.is_empty() && settings.provider == "codex" {
+        crate::provider::models(app.clone(), "codex").await?[0]["id"]
+            .as_str()
+            .unwrap_or("unknown")
+            .to_owned()
+    } else {
+        settings.model
+    };
     let b = tokio::task::spawn_blocking(move || {
-        crate::context::scan_with_ignores(&w.path, false, &ignores)
+        crate::context::scan_for_model(&w.path, false, &ignores, &model)
     })
     .await??;
     Ok(Json(json!(b.inventory)))
 }
+
+/// Keep screenshots returned by the normal HTTP tool endpoint lightweight.
+///
+/// `tools::execute` also serves the agent loop and the MCP bridge, both of
+/// which need the encoded image for model feedback.  The browser-facing HTTP
+/// endpoint only needs the artifact path (and the dimensions already returned
+/// by `computer::action`), so remove the binary payload at this boundary.
+fn strip_api_screenshot_image(name: &str, args: &Value, result: &mut Value) {
+    if name == "computer"
+        && args["action"] == "screenshot"
+        && let Some(object) = result.as_object_mut()
+    {
+        object.remove("image");
+    }
+}
+
 async fn action(
     State(app): State<Arc<App>>,
     Path(action): Path<String>,
     Json(a): Json<Value>,
 ) -> Api {
     let result = match action.as_str() {
+        "event_read" => {
+            let id = string(&a, "id")?;
+            if id.is_empty() || !id.bytes().all(|c| c.is_ascii_alphanumeric() || c == b'-') {
+                return Err(err("Invalid event id").into());
+            }
+            let path = app.dir.join("events").join(format!("{id}.json"));
+            let bytes = tokio::task::spawn_blocking(move || std::fs::read(path)).await??;
+            return Ok(Json(serde_json::from_slice(&bytes)?));
+        }
         "browse" => {
             let home = std::env::var("HOME").unwrap_or_else(|_| "/".into());
             let path = a["path"].as_str().unwrap_or(&home);
@@ -224,14 +273,35 @@ async fn action(
                     continue;
                 };
                 let link = entry.file_type().map(|t| t.is_symlink()).unwrap_or(false);
-                entries.push(json!({"name":entry.file_name().to_string_lossy(),"path":entry.path(),"directory":meta.is_dir(),"symlink":link,"bytes":if meta.is_file() { Some(meta.len()) } else { None } }));
+                let timestamp = |time: std::io::Result<std::time::SystemTime>| {
+                    time.ok()
+                        .and_then(|t| t.duration_since(std::time::UNIX_EPOCH).ok())
+                        .map(|d| d.as_millis() as u64)
+                };
+                entries.push(json!({"modified_ms":timestamp(meta.modified()),"created_ms":timestamp(meta.created()),"name":entry.file_name().to_string_lossy(),"path":entry.path(),"directory":meta.is_dir(),"symlink":link,"bytes":if meta.is_file() { Some(meta.len()) } else { None } }));
             }
             json!({"path":dir,"home":home,"entries":entries})
         }
-        "terminal_screen" => app.terminals.get(string(&a, "terminal_id")?)?.view(
-            a["revision"].as_u64(),
-            a["scrollback"].as_u64().unwrap_or(0) as usize,
-        ),
+        // These high-frequency operations do not mutate persistent application state.
+        "terminal_screen" => {
+            let terminal = app.terminals.get(string(&a, "terminal_id")?)?;
+            terminal
+                .wait_for_change(a["revision"].as_u64(), a["wait_ms"].as_u64().unwrap_or(0))
+                .await;
+            return Ok(Json(terminal.screen_view(
+                a["revision"].as_u64(),
+                a["scrollback"].as_u64().unwrap_or(0) as usize,
+                a["compact"].as_bool().unwrap_or(false),
+            )));
+        }
+        "terminal_input" => {
+            let terminal = app.terminals.get(string(&a, "terminal_id")?)?;
+            if terminal.workspace != string(&a, "workspace")? {
+                return Err(err("Terminal belongs to another workspace").into());
+            }
+            terminal.write(string(&a, "text")?)?;
+            return Ok(Json(json!({"ok": true})));
+        }
         "terminal_cd" => {
             let w = app.workspace(string(&a, "workspace")?)?;
             let cwd = crate::context::resolve(&w.path, string(&a, "path")?, false)?;
@@ -254,6 +324,52 @@ async fn action(
                 app.terminals.spawn(&w.id, &cwd, None)?.snapshot()
             }
         }
+        "git_status" => {
+            let w = app.workspace(string(&a, "workspace")?)?;
+            crate::git::status(&w.path).await?
+        }
+        "git_file" => {
+            let w = app.workspace(string(&a, "workspace")?)?;
+            crate::git::file_diff(&w.path, string(&a, "path")?).await?
+        }
+        "git_branch" => {
+            let w = app.workspace(string(&a, "workspace")?)?;
+            crate::git::branch_info(&w.path, string(&a, "branch")?).await?
+        }
+        "git_switch" | "git_create" | "git_discard" => {
+            let w = app.workspace(string(&a, "workspace")?)?;
+            if app
+                .disk
+                .lock()
+                .unwrap()
+                .jobs
+                .iter()
+                .any(|j| j.workspace == w.id && j.status == "running")
+            {
+                return Err(err("Wait for the running task before changing Git state").into());
+            }
+            crate::git::action(
+                &w.path,
+                &action,
+                a["branch"].as_str().unwrap_or(""),
+                a["confirmed"].as_bool().unwrap_or(false),
+            )
+            .await?
+        }
+        "codex_usage" => crate::provider::codex_usage(&app).await?,
+        "workspace_close" => {
+            let id = string(&a, "workspace")?;
+            let mut disk = app.disk.lock().unwrap();
+            disk.workspaces
+                .iter_mut()
+                .find(|w| w.id == id)
+                .ok_or_else(|| err("Workspace not found"))?
+                .closed = true;
+            if disk.ui["selected"] == id {
+                disk.ui["selected"] = json!(null);
+            }
+            json!({"ok":true})
+        }
         "workspace_open" => json!(app.open_workspace(std::path::Path::new(string(&a, "path")?))?),
         "workspace_mode" => {
             let id = string(&a, "workspace")?;
@@ -263,9 +379,18 @@ async fn action(
             }
             let w = app.workspace(id)?;
             if mode == "light" {
-                let ignores = app.disk.lock().unwrap().settings.context_ignores.clone();
+                let settings = app.disk.lock().unwrap().settings.clone();
+                let ignores = settings.context_ignores;
+                let model = if settings.model.is_empty() && settings.provider == "codex" {
+                    crate::provider::models(app.clone(), "codex").await?[0]["id"]
+                        .as_str()
+                        .unwrap_or("unknown")
+                        .to_owned()
+                } else {
+                    settings.model
+                };
                 let b = tokio::task::spawn_blocking(move || {
-                    crate::context::scan_with_ignores(&w.path, false, &ignores)
+                    crate::context::scan_for_model(&w.path, false, &ignores, &model)
                 })
                 .await??;
                 if !b.inventory.light_allowed {
@@ -305,7 +430,15 @@ async fn action(
                 .iter_mut()
                 .find(|w| Some(w.id.as_str()) == a["workspace"].as_str())
                 .ok_or_else(|| err("Workspace not found"))?;
-            w.ui["draft"] = json!(string(&a, "text")?);
+            let session = a["session"].as_str().unwrap_or("chat");
+            if session == "chat" {
+                w.ui["draft"] = json!(string(&a, "text")?);
+            } else {
+                if !w.ui["drafts"].is_object() {
+                    w.ui["drafts"] = json!({});
+                }
+                w.ui["drafts"][session] = json!(string(&a, "text")?);
+            }
             json!({"ok":true})
         }
         "settings" => {
@@ -314,6 +447,18 @@ async fn action(
                 || !(1..=100).contains(&settings.max_steps)
             {
                 return Err(err("Invalid provider or step limit (1–100)").into());
+            }
+            if settings.compact_model.trim().is_empty() {
+                return Err(err("Choose a compaction model").into());
+            }
+            crate::provider::validate_thinking(&settings.thinking)?;
+            if !settings.quality_threshold.is_finite()
+                || !(0. ..=10.).contains(&settings.quality_threshold)
+            {
+                return Err(err(
+                    "Quality threshold must be between 0 (inclusive) and 10 (inclusive)",
+                )
+                .into());
             }
             let mut rules = ignore::gitignore::GitignoreBuilder::new(".");
             for pattern in &settings.context_ignores {
@@ -334,7 +479,7 @@ async fn action(
             json!({"ok":true})
         }
         "run" => {
-            json!({"job_id":crate::agent::start(app.clone(),string(&a,"workspace")?,string(&a,"prompt")?)?})
+            json!({"job_id":crate::agent::start_in_session(app.clone(),string(&a,"workspace")?,string(&a,"prompt")?,a["thinking"].as_str(),a["session"].as_str().unwrap_or("chat"))?})
         }
         "stop" => {
             crate::agent::stop(&app, string(&a, "job_id")?)?;
@@ -373,18 +518,23 @@ async fn action(
             json!({"ok":true})
         }
         "tool" => {
-            crate::tools::execute(
-                app.clone(),
-                string(&a, "workspace")?,
-                string(&a, "name")?,
-                &a["arguments"],
-            )
-            .await?
+            let name = string(&a, "name")?;
+            let arguments = &a["arguments"];
+            let mut result =
+                crate::tools::execute(app.clone(), string(&a, "workspace")?, name, arguments)
+                    .await?;
+            strip_api_screenshot_image(name, arguments, &mut result);
+            result
         }
         "tool_definitions" => json!(crate::tools::definitions()),
         _ => return Err(err("Unknown action").into()),
     };
-    app.save()?;
+    if !matches!(
+        action.as_str(),
+        "browse" | "git_status" | "git_file" | "git_branch" | "codex_usage" | "tool_definitions"
+    ) {
+        app.save()?;
+    }
     Ok(Json(result))
 }
 async fn media(
@@ -439,6 +589,21 @@ pub async fn serve(app: Arc<App>, port: u16) -> Result<()> {
     println!(
         "Lessagent is running. Open http://127.0.0.1:{port}/\nKeep this process running; closing the browser does not stop jobs."
     );
+    let discovery = app.clone();
+    tokio::spawn(async move {
+        let provider = discovery.disk.lock().unwrap().settings.provider.clone();
+        match crate::provider::models(discovery.clone(), &provider).await {
+            Ok(models) => discovery.log(
+                "models",
+                &format!(
+                    "Startup discovery: {} {} models",
+                    models.as_array().map_or(0, |m| m.len()),
+                    provider
+                ),
+            ),
+            Err(e) => discovery.log("models", &format!("Startup discovery unavailable: {e}")),
+        }
+    });
     let shutdown = app.clone();
     axum::serve(
         listener,
@@ -454,4 +619,34 @@ pub async fn serve(app: Arc<App>, port: u16) -> Result<()> {
     })
     .await?;
     Ok(())
+}
+
+#[cfg(test)]
+mod tests {
+    use super::strip_api_screenshot_image;
+    use serde_json::json;
+
+    #[test]
+    fn normal_api_screenshot_keeps_path_but_drops_image_bytes() {
+        let mut result = json!({
+            "path": "agent/output/screenshot.png",
+            "mime": "image/png",
+            "screen_width": 2560,
+            "screen_height": 1600,
+            "image": {"mime": "image/png", "data": "very-long-base64-payload"}
+        });
+
+        strip_api_screenshot_image("computer", &json!({"action": "screenshot"}), &mut result);
+
+        assert_eq!(result["path"], "agent/output/screenshot.png");
+        assert_eq!(result["screen_width"], 2560);
+        assert!(result.get("image").is_none());
+    }
+
+    #[test]
+    fn non_screenshot_results_are_unchanged() {
+        let mut result = json!({"ok": true, "image": {"data": "keep-this"}});
+        strip_api_screenshot_image("computer", &json!({"action": "click"}), &mut result);
+        assert_eq!(result["image"]["data"], "keep-this");
+    }
 }

@@ -7,7 +7,11 @@ w.notice=e=>errors.push(e);w.guard=fn=>(...args)=>Promise.resolve(fn(...args)).c
 w.button=(text,fn,cls)=>{const n=w.el('button',cls,text);n.onclick=w.guard(fn);return n;};w.iconButton=(text,title,fn)=>w.button(text,fn);
 const dirs=['.config','Documents','Downloads','project'];
 w.act=async(name,{path})=>{assert.equal(name,'browse');if(path==='~')path='/home/test';if(path==='/home/test')return {path,entries:dirs.map(name=>({name,path:path+'/'+name,directory:true}))};if(path==='/home/test/Documents')return {path,entries:[]};throw Error('Folder not found');};
-const source=fs.readFileSync(process.cwd()+'/web/app.js','utf8');w.eval(source.slice(source.indexOf('function createFileBrowser(options)')));
+const source=fs.readFileSync(process.cwd()+'/web/app.js','utf8');
+w.document.hasFocus=()=>true;
+Object.defineProperty(w.document,'hidden',{value:false});
+w.eval(source.slice(source.indexOf('function uiActive()'),source.indexOf('function resumeUi()')));
+w.eval(source.slice(source.indexOf('function createFileBrowser(options)')));
 const pause=ms=>new Promise(r=>setTimeout(r,ms));
 (async()=>{try{
 const root=w.createFileBrowser({root:'/home/test',picker:true,onChoose:path=>{chosen=path;}});w.document.body.append(root);await pause(10);

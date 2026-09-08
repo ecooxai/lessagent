@@ -1,0 +1,20 @@
+const {JSDOM}=require('jsdom');
+const fs=require('fs'), assert=require('node:assert/strict');
+const w=new JSDOM('<main></main>',{runScripts:'outside-only'}).window;
+const source=fs.readFileSync('web/app.js','utf8');
+w.el=(tag,cls,text)=>{const n=w.document.createElement(tag);n.className=cls||'';if(text!==undefined)n.textContent=text;return n;};
+w.guard=fn=>fn;
+w.button=(text,fn)=>{const n=w.el('button','',text);n.onclick=fn;return n;};
+w.trackAgentDetail=()=>{};
+let reads=0;
+w.act=async(name,args)=>{assert.equal(name,'event_read');assert.equal(args.id,'saved-event');reads++;return {kind:'result',result:{stdout:'Original complete output'}};};
+w.eval(source.slice(source.indexOf('function renderAgentEvents('),source.indexOf('function shortTabTitle(')));
+(async()=>{
+ const root=w.renderAgentEvents([{kind:'result',archived_event:'saved-event',bytes:100000}]);
+ assert.equal(reads,0);
+ assert.match(root.textContent,/Load result details/);
+ await root.querySelector('button').onclick();
+ assert.equal(reads,1);
+ assert.match(root.textContent,/Original complete output/);
+ console.log('PASS: archived event details load only when requested');
+})().catch(e=>{console.error(e);process.exitCode=1;});

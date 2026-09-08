@@ -1,6 +1,7 @@
 pub mod agent;
 pub mod computer;
 pub mod context;
+pub mod git;
 pub mod mcp;
 pub mod provider;
 pub mod server;
