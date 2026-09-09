@@ -1,0 +1,52 @@
+PASS: resource is readable while computer control is disabled; CPU/GPU/RAM and primary display are real
+PASS: both browser entrypoints reject 16 invalid/stale sizes before creating profiles or windows
+  + Exception Group Traceback (most recent call last):
+  |   File "/Users/ecoo/project/agent/lessagent/tests/browser_geometry.py", line 164, in <module>
+  |     asyncio.run(exercise(Path(tmp)))
+  |   File "/Users/ecoo/.local/share/uv/python/cpython-3.12.13-macos-aarch64-none/lib/python3.12/asyncio/runners.py", line 195, in run
+  |     return runner.run(main)
+  |            ^^^^^^^^^^^^^^^^
+  |   File "/Users/ecoo/.local/share/uv/python/cpython-3.12.13-macos-aarch64-none/lib/python3.12/asyncio/runners.py", line 118, in run
+  |     return self._loop.run_until_complete(task)
+  |            ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+  |   File "/Users/ecoo/.local/share/uv/python/cpython-3.12.13-macos-aarch64-none/lib/python3.12/asyncio/base_events.py", line 691, in run_until_complete
+  |     return future.result()
+  |            ^^^^^^^^^^^^^^^
+  |   File "/Users/ecoo/project/agent/lessagent/tests/browser_geometry.py", line 83, in exercise
+  |     async with streamablehttp_client(base + '/mcp') as (read, write, _):
+  |                ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+  |   File "/Users/ecoo/.local/share/uv/python/cpython-3.12.13-macos-aarch64-none/lib/python3.12/contextlib.py", line 231, in __aexit__
+  |     await self.gen.athrow(value)
+  |   File "/Users/ecoo/.cache/uv/archive-v0/eYeJHPJubUmw1iqT/lib/python3.12/site-packages/mcp/client/streamable_http.py", line 742, in streamablehttp_client
+  |     async with streamable_http_client(
+  |                ^^^^^^^^^^^^^^^^^^^^^^^
+  |   File "/Users/ecoo/.local/share/uv/python/cpython-3.12.13-macos-aarch64-none/lib/python3.12/contextlib.py", line 231, in __aexit__
+  |     await self.gen.athrow(value)
+  |   File "/Users/ecoo/.cache/uv/archive-v0/eYeJHPJubUmw1iqT/lib/python3.12/site-packages/mcp/client/streamable_http.py", line 672, in streamable_http_client
+  |     async with anyio.create_task_group() as tg:
+  |                ^^^^^^^^^^^^^^^^^^^^^^^^^
+  |   File "/Users/ecoo/.cache/uv/archive-v0/eYeJHPJubUmw1iqT/lib/python3.12/site-packages/anyio/_backends/_asyncio.py", line 847, in __aexit__
+  |     raise BaseExceptionGroup(
+  | ExceptionGroup: unhandled errors in a TaskGroup (1 sub-exception)
+  +-+---------------- 1 ----------------
+    | Exception Group Traceback (most recent call last):
+    |   File "/Users/ecoo/.cache/uv/archive-v0/eYeJHPJubUmw1iqT/lib/python3.12/site-packages/mcp/client/streamable_http.py", line 695, in streamable_http_client
+    |     yield (
+    |   File "/Users/ecoo/.cache/uv/archive-v0/eYeJHPJubUmw1iqT/lib/python3.12/site-packages/mcp/client/streamable_http.py", line 747, in streamablehttp_client
+    |     yield streams
+    |   File "/Users/ecoo/project/agent/lessagent/tests/browser_geometry.py", line 84, in exercise
+    |     async with ClientSession(read, write) as client:
+    |                ^^^^^^^^^^^^^^^^^^^^^^^^^^
+    |   File "/Users/ecoo/.cache/uv/archive-v0/eYeJHPJubUmw1iqT/lib/python3.12/site-packages/mcp/shared/session.py", line 238, in __aexit__
+    |     return await self._task_group.__aexit__(exc_type, exc_val, exc_tb)
+    |            ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+    |   File "/Users/ecoo/.cache/uv/archive-v0/eYeJHPJubUmw1iqT/lib/python3.12/site-packages/anyio/_backends/_asyncio.py", line 847, in __aexit__
+    |     raise BaseExceptionGroup(
+    | ExceptionGroup: unhandled errors in a TaskGroup (1 sub-exception)
+    +-+---------------- 1 ----------------
+      | Traceback (most recent call last):
+      |   File "/Users/ecoo/project/agent/lessagent/tests/browser_geometry.py", line 128, in exercise
+      |     assert Path(value['path']).is_relative_to(work / 'output' / 'computer')
+      |            ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+      | AssertionError
+      +------------------------------------

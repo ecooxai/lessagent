@@ -8,7 +8,8 @@ const SUMMARY_INSTRUCTIONS: &str = "Every tool call must include summary: a conc
 
 fn server_instructions() -> String {
     format!(
-        "Local computer and coding agent. Open a folder with workspace_open or select one with workspace_list, then pass its workspace id to project tools. {WORKSPACE_INSTRUCTIONS} {SUMMARY_INSTRUCTIONS} Commands execute on the host."
+        "Local computer and coding agent. {} Open a folder with workspace_open or select one with workspace_list, then pass its workspace id to project tools. {WORKSPACE_INSTRUCTIONS} {SUMMARY_INSTRUCTIONS} Commands execute on the host.",
+        crate::resources::READ_FIRST
     )
 }
 
@@ -29,7 +30,9 @@ fn tool_definitions() -> Vec<Value> {
         json!({"name":"workspace_open","parameters":{"type":"object","properties":{"path":{"type":"string"}},"required":["path"]}}),
         json!({"name":"workspace_list","parameters":{"type":"object","properties":{}}}),
         json!({"name":"agent_run","parameters":{"type":"object","properties":{"workspace":{"type":"string"},"prompt":{"type":"string"}},"required":["workspace","prompt"]}}),
-        json!({"name":"agent_status","parameters":{"type":"object","properties":{"job_id":{"type":"string"}},"required":["job_id"]}})
+        json!({"name":"agent_status","parameters":{"type":"object","properties":{"job_id":{"type":"string"}},"required":["job_id"]}}),
+        json!({"name":"list_resources","parameters":{"type":"object","properties":{},"additionalProperties":false}}),
+        json!({"name":"read_resource","parameters":{"type":"object","properties":{"uri":{"type":"string","description":"Exact URI from list_resources; use lessagent://server/instruction.md for host information and server guidance."}},"required":["uri"],"additionalProperties":false}})
     ]);
     defs.into_iter().map(|mut d| {
         add_required_parameter(&mut d["parameters"], "summary", json!({
@@ -40,9 +43,28 @@ fn tool_definitions() -> Vec<Value> {
         json!({
             "name":name,
             "description":mcp_tool_description(name, d["description"].as_str().unwrap_or_default()),
-            "inputSchema":d["parameters"]
+            "inputSchema":d["parameters"],
+            "annotations":tool_annotations(name)
         })
     }).collect()
+}
+
+fn tool_annotations(name: &str) -> Value {
+    let read_only = matches!(
+        name,
+        "read_file"
+            | "list_files"
+            | "workspace_list"
+            | "agent_status"
+            | "terminal_read"
+            | "list_resources"
+            | "read_resource"
+    );
+    let non_destructive = read_only || matches!(name, "workspace_open" | "browser_open");
+    let closed_world = read_only || matches!(name, "write_file" | "write_image" | "terminal_stop");
+    json!({"readOnlyHint":read_only, "destructiveHint":!non_destructive,
+        "idempotentHint":read_only || matches!(name, "workspace_open" | "write_file" | "write_image" | "terminal_stop"),
+        "openWorldHint":!closed_world})
 }
 
 fn add_required_parameter(schema: &mut Value, name: &str, property: Value) {
@@ -99,8 +121,11 @@ pub async fn handle(app: Arc<App>, request: Value) -> Option<Value> {
     let result = match method {
         "initialize" => Ok(json!({"protocolVersion":params["protocolVersion"].as_str()
                 .filter(|v| matches!(*v, "2025-03-26" | "2025-06-18" | "2025-11-25"))
-                .unwrap_or("2025-11-25"),"capabilities":{"tools":{"listChanged":false}},"serverInfo":{"name":"lessagent","version":env!("CARGO_PKG_VERSION")},"instructions":server_instructions()})),
+                .unwrap_or("2025-11-25"),"capabilities":{"tools":{"listChanged":false},"resources":{"subscribe":false,"listChanged":false}},"serverInfo":{"name":"lessagent","version":env!("CARGO_PKG_VERSION")},"instructions":server_instructions()})),
         "ping" => Ok(json!({})),
+        "resources/list" => crate::resources::list(params),
+        "resources/templates/list" => crate::resources::templates(params),
+        "resources/read" => crate::resources::read(app.clone(), params).await,
         "tools/list" => Ok(json!({"tools":tool_definitions()})),
         "tools/call" => {
             let name = params["name"].as_str().unwrap_or_default();
@@ -123,7 +148,10 @@ pub async fn handle(app: Arc<App>, request: Value) -> Option<Value> {
             }
             if !is_error && matches!(name, "workspace_open" | "workspace_list") {
                 content.push(json!({"type":"text","text":WORKSPACE_INSTRUCTIONS}));
-                structured["instructions"] = json!(WORKSPACE_INSTRUCTIONS);
+                structured["instructions"] = json!(format!(
+                    "{} {WORKSPACE_INSTRUCTIONS}",
+                    crate::resources::READ_FIRST
+                ));
             }
             Ok(json!({"content":content,"structuredContent":structured,"isError":is_error}))
         }
@@ -138,6 +166,21 @@ pub async fn handle(app: Arc<App>, request: Value) -> Option<Value> {
 }
 fn mcp_tool_description(name: &str, fallback: &str) -> String {
     let (summary, purpose, how) = match name {
+        "list_resources" => (
+            "List server-owned MCP resources, including instruction.md.",
+            "Use it for resource discovery when the client only exposes MCP tools; equivalent to resources/list.",
+            "Pass summary; no workspace is required. Read instruction.md with read_resource before coding or computer work. This tool is read-only.",
+        ),
+        "read_resource" => (
+            "Read instruction.md with live host system information and server usage guidance.",
+            "Use it to learn OS, CPU, GPU, RAM, screen geometry, output rules and safe coding/computer workflows; equivalent to resources/read.",
+            "Pass summary and uri from list_resources (lessagent://server/instruction.md). No workspace or computer-control permission is required. Returns Markdown and structured system metadata; refresh after display changes.",
+        ),
+        "browser_open" => (
+            "Open an isolated background Chrome window, default 1000 by 600 logical points.",
+            "Use it to create a controlled page without touching the user's normal browser or physical pointer.",
+            "Pass workspace, summary and an HTTP(S) url; optional width/height must not exceed the current primary display's logical resolution. The window is fitted to its visible work area. Reuse returned window_id/pid and image width/height for computer input. Screenshots default to project output/computer/.",
+        ),
         "shell" => (
             "Run Bash in a visible persistent workspace terminal.",
             "Use it for interactive or long-running shell work that should remain attached to a PTY.",
@@ -224,7 +267,8 @@ fn mcp_tool_description(name: &str, fallback: &str) -> String {
         ),
     };
     format!(
-        "Summary: {summary}\n\nPurpose: {purpose}\n\nHow: {how}\n\nCall summary: {SUMMARY_INSTRUCTIONS}\n\nRead first: {WORKSPACE_INSTRUCTIONS}"
+        "Summary: {summary}\n\nPurpose: {purpose}\n\nHow: {how}\n\nCall summary: {SUMMARY_INSTRUCTIONS}\n\nRead first: {} {WORKSPACE_INSTRUCTIONS}",
+        crate::resources::READ_FIRST
     )
 }
 
@@ -277,6 +321,16 @@ fn mcp_result_content(
                     "{shown}\n\nTerminal: {terminal} · exited: {exited} · exit code: {exit_code}"
                 )
             }
+            "read_resource" => value["contents"]
+                .as_array()
+                .map(|items| {
+                    items
+                        .iter()
+                        .filter_map(|item| item["text"].as_str())
+                        .collect::<Vec<_>>()
+                        .join("\n\n")
+                })
+                .unwrap_or_default(),
             "read_file" if value["text"].is_string() => {
                 let path = arguments["path"].as_str().unwrap_or("unknown");
                 let offset = value["offset"].as_u64().unwrap_or(0);
@@ -347,6 +401,10 @@ async fn call(app: Arc<App>, p: &Value) -> crate::Result<Value> {
     }
     let a = &arguments;
     match name {
+        "list_resources" => crate::resources::list(a).map_err(|(_, message)| crate::err(message)),
+        "read_resource" => crate::resources::read(app, a)
+            .await
+            .map_err(|(_, message)| crate::err(message)),
         "workspace_open" => Ok(serde_json::to_value(
             app.open_workspace(std::path::Path::new(crate::tools::string(a, "path")?))?,
         )?),
@@ -408,7 +466,7 @@ mod tests {
     fn every_mcp_tool_requires_summary_without_changing_internal_tools() {
         let definitions = tool_definitions();
         let internal = crate::tools::definitions();
-        assert_eq!(definitions.len(), internal.len() + 4);
+        assert_eq!(definitions.len(), internal.len() + 6);
         let mut names = std::collections::HashSet::new();
         for tool in &definitions {
             assert!(names.insert(tool["name"].as_str().unwrap()));
@@ -532,7 +590,7 @@ mod tests {
         assert_eq!(opened["isError"], false);
         assert_eq!(
             opened["structuredContent"]["instructions"],
-            WORKSPACE_INSTRUCTIONS
+            format!("{} {WORKSPACE_INSTRUCTIONS}", crate::resources::READ_FIRST)
         );
         assert!(opened["structuredContent"]["result"]["id"].is_string());
         let listed = fixture
@@ -544,7 +602,7 @@ mod tests {
         assert_eq!(listed["isError"], false);
         assert_eq!(
             listed["structuredContent"]["instructions"],
-            WORKSPACE_INSTRUCTIONS
+            format!("{} {WORKSPACE_INSTRUCTIONS}", crate::resources::READ_FIRST)
         );
         assert!(listed["structuredContent"]["result"].is_array());
         assert_eq!(
@@ -633,5 +691,58 @@ mod tests {
                 .unwrap()
                 .starts_with("Error: ")
         );
+    }
+    #[tokio::test]
+    async fn resource_protocol_and_bridge_errors_are_safe_bootstrap_calls() {
+        let fixture = TestApp::new();
+        let init = fixture.request("initialize", json!({})).await;
+        assert_eq!(
+            init["result"]["capabilities"]["resources"]["subscribe"],
+            false
+        );
+        assert!(
+            init["result"]["instructions"]
+                .as_str()
+                .unwrap()
+                .contains(crate::resources::INSTRUCTION_URI)
+        );
+        let protocol = fixture.request("resources/list", json!({})).await;
+        let bridge = fixture
+            .tool(
+                "list_resources",
+                json!({"summary":"Discover the server guide."}),
+            )
+            .await;
+        assert_eq!(bridge["structuredContent"]["result"], protocol["result"]);
+        assert_eq!(
+            fixture.request("resources/templates/list", json!({})).await["result"],
+            json!({"resourceTemplates":[]})
+        );
+        for (params, code) in [
+            (json!({}), -32602),
+            (json!({"uri":false}), -32602),
+            (json!({"uri":"file:///etc/passwd"}), -32002),
+        ] {
+            assert_eq!(
+                fixture.request("resources/read", params.clone()).await["error"]["code"],
+                code
+            );
+            let mut params = params;
+            params["summary"] = json!("Verify resource URI validation.");
+            assert_eq!(fixture.tool("read_resource", params).await["isError"], true);
+        }
+        for name in [
+            "list_resources",
+            "read_resource",
+            "workspace_list",
+            "read_file",
+        ] {
+            assert_eq!(tool_annotations(name)["readOnlyHint"], true);
+            assert_eq!(tool_annotations(name)["destructiveHint"], false);
+            assert_eq!(tool_annotations(name)["openWorldHint"], false);
+        }
+        assert_eq!(tool_annotations("computer")["readOnlyHint"], false);
+        assert_eq!(tool_annotations("computer")["destructiveHint"], true);
+        assert!(fixture.app.disk.lock().unwrap().workspaces.is_empty());
     }
 }

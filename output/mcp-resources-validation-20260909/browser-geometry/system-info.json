@@ -1,0 +1,62 @@
+{
+  "browser_size_schema": {
+    "height": {
+      "default": 600,
+      "description": "Browser window size in logical points. Maximum is the current primary display, rechecked at launch; the actual window is fitted to its visible work area. See instruction.md. Not screenshot pixels.",
+      "maximum": 800,
+      "minimum": 480,
+      "type": "integer"
+    },
+    "width": {
+      "default": 1000,
+      "description": "Browser window size in logical points. Maximum is the current primary display, rechecked at launch; the actual window is fitted to its visible work area. See instruction.md. Not screenshot pixels.",
+      "maximum": 1280,
+      "minimum": 640,
+      "type": "integer"
+    }
+  },
+  "computer_control_enabled": false,
+  "cpu": {
+    "active_logical_cores": 6,
+    "logical_cores": 6,
+    "model": "Apple A18 Pro",
+    "physical_cores": 6
+  },
+  "display_note": "Window dimensions use logical points. Pixel dimensions are current display-mode backing pixels, not a promise about a window screenshot; use the dimensions encoded in that image.",
+  "displays": [
+    {
+      "backing_scale_factor": 2,
+      "id": 1,
+      "logical_height": 800,
+      "logical_origin_x": 0,
+      "logical_origin_y": 0,
+      "logical_width": 1280,
+      "name": "Built-in Retina Display",
+      "pixel_height": 1600,
+      "pixel_width": 2560,
+      "primary": true,
+      "visible_height": 800,
+      "visible_width": 1280
+    }
+  ],
+  "gpu_note": "Metal-visible devices. Recommended working-set size is a budget, not dedicated VRAM; unified memory shares system RAM.",
+  "gpus": [
+    {
+      "name": "Apple A18 Pro",
+      "recommended_max_working_set_bytes": 5726633984,
+      "unified_memory": true
+    }
+  ],
+  "observed_at_unix_ms": 1788959032214,
+  "os": "macos",
+  "os_version": "Version 27.0 (Build 26A5425a)",
+  "permissions": {
+    "accessibility": true,
+    "screen_recording": true
+  },
+  "process_architecture": "aarch64",
+  "ram": {
+    "total_bytes": 8589934592,
+    "total_gib": 8.0
+  }
+}

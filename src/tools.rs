@@ -207,10 +207,15 @@ pub async fn execute(app: Arc<App>, workspace: &str, name: &str, args: &Value) -
                     }
                 }
                 if args["action"] == "screenshot" || r["automatic_screenshot"] == true {
-                    let encoded = std::fs::read(&p).map_err(crate::Error::from)
-                        .and_then(|bytes| crate::image_content::attach(&mut r, &bytes, "image/png"));
+                    let encoded = std::fs::read(&p)
+                        .map_err(crate::Error::from)
+                        .and_then(|bytes| {
+                            crate::image_content::attach(&mut r, &bytes, "image/png")
+                        });
                     if let Err(error) = encoded {
-                        if !control { return Err(error); }
+                        if !control {
+                            return Err(error);
+                        }
                         // Input already occurred: do not turn an observation failure
                         // into a retryable input failure or replay the action.
                         r["screenshot_error"] = json!(error.to_string());

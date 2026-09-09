@@ -6,7 +6,7 @@ Read this entire file before inspecting implementation files, running commands, 
 
 Preserve unrelated tracked and untracked work. Check `git status --short` before editing; do not reset, clean, stash, commit, or restart the user's running backend without an explicit request. Keep changes scoped and inspect existing files before replacing them. Shell tools run on the host, not in a sandbox. Do not expose secrets, tokens, or personal data in commands, summaries, logs, or reports.
 
-Use **debug builds for all development, debugging, and tests**. `cargo build --locked` and `cargo run --locked` use Cargo's dev profile and produce `target/debug/lessagent`; `cargo test --locked` uses the unoptimized test profile. There is no standard `cargo debug` command. Do not use `--release` for development or tests. Release commands below are for an explicitly requested production build/run only.
+Use **debug builds for all development, debugging, and tests**. `cargo build --locked` and `cargo run --locked` use Cargo's dev profile and produce `target/debug/lessagent`; `cargo test --locked` uses the unoptimized test profile. `build.rs` also compiles the Swift helper with `-Onone -g` outside the release profile. There is no standard `cargo debug` command. Do not use `--release` for development or tests. Release commands below are for an explicitly requested production build/run only.
 
 Always start development/test servers with a **different `--port` from the normal backend (default 3210)** and a disposable `--data-dir`. Never run test `stop` / `restart` against the default port or the user's saved state. Prefer the foreground `serve` command and stop only processes created for the test. A running server is verified with an HTTP request; do not poll its terminal waiting for it to exit.
 
@@ -20,7 +20,9 @@ Lessagent is a persistent local computer and coding agent implemented in Rust. O
 | `src/main.rs` | CLI parsing, startup/reconnection, stop/restart, MCP stdio bridge. |
 | `src/lib.rs` | Module wiring and shared helpers. |
 | `src/server.rs` | HTTP routes, browser API, authentication, backend lifecycle. |
-| `src/mcp.rs` | MCP initialization, tool schemas/descriptions, summary validation, dispatch adapter and text/image results. |
+| `src/mcp.rs` | MCP initialization, resource/tool dispatch, schemas, annotations, summaries and presentation. |
+| `src/resources.rs`, `docs/instruction.md` | Server-owned instruction.md resource, live host metadata, resource/tool bridges. |
+| `src/image_content.rs` | Encoded image dimensions and shared MCP image metadata. |
 | `src/tools.rs` | Shared agent/CLI tool definitions and execution: shell/Python, files, terminals, computer. |
 | `src/agent.rs` | Agent loop, sessions, verification, compaction, continuity and artifacts. |
 | `src/provider.rs` | Model discovery, authentication, provider request/response translation. |
@@ -28,13 +30,14 @@ Lessagent is a persistent local computer and coding agent implemented in Rust. O
 | `src/context.rs`, `src/git.rs` | Context inventory/ignore rules, file boundaries, repository operations. |
 | `src/terminal.rs`, `src/tui.rs` | PTY lifecycle, VT100 terminal state and terminal UI. |
 | `src/computer.rs` | Platform computer-control integration. |
-| `native/computer.swift`, `native/browser.swift`, `build.rs` | macOS native helper and isolated Chrome control, compiled/embedded by Cargo. |
+| `native/computer.swift`, `native/browser.swift`, `native/system.swift`, `build.rs` | macOS native helper and isolated Chrome control, compiled/embedded by Cargo. |
 | `web/` | Plain HTML/CSS/JavaScript UI embedded in the binary. |
 | `tests/` | Python backend/CLI/MCP integration, JavaScript UI regressions and native-control fixtures. |
 | `.github/workflows/` | macOS/Linux CI checks. |
 | `agent/output/` | Real task deliverables and image evidence, not bookkeeping. |
 | `agent/continuity/`, `agent/output-history/` | Internal continuity records and older artifact snapshots. |
-| `target/`, `output/` | Cargo build outputs and test reports; not source. |
+| `target/` | Cargo build intermediates; use the debug profile for development/tests. |
+| `output/` | Important finished deliverables: verified binaries, images, 3D models, renders and documents; keep validation evidence in named subfolders. |
 
 Runtime data lives outside the checkout by default, under `$XDG_DATA_HOME/lessagent` or `~/.local/share/lessagent`. `--data-dir` / `LESSAGENT_DATA_DIR` overrides it; `--port` / `LESSAGENT_PORT` selects the server port. All clients, including the MCP stdio bridge, must match the intended backend settings.
 
@@ -94,12 +97,21 @@ done
 For computer-control changes, also run:
 
 ```sh
+uv run --with 'mcp>=1.20,<2' tests/browser_geometry.py target/debug/lessagent
 uv run --with 'mcp>=1.20,<2' --with pillow tests/computer_background.py target/debug/lessagent
 ```
 
-That integration test needs Chrome plus macOS Accessibility and Screen Recording permissions. Keep the shared pointer and user's normal browser/profile untouched. Missing permissions or unavailable dependencies must be reported as blockers, not passes. Do not weaken assertions or use placeholder verification. Report exact commands, results, and any untested behavior; retain useful failure evidence separately from source.
+These native integration tests need Chrome plus macOS Accessibility and Screen Recording permissions. Keep the shared pointer and user's normal browser/profile untouched. Missing permissions or unavailable dependencies must be reported as blockers, not passes. Do not weaken assertions or use placeholder verification. Report exact commands, results, and any untested behavior; retain useful failure evidence separately from source.
 
 ## MCP contract
+
+Read the server resource `lessagent://server/instruction.md` through standard MCP `resources/list` / `resources/read`, or the read-only `list_resources` / `read_resource` tools for tool-only clients. These bootstrap operations do not require a workspace or computer control enabled. The resource includes freshly read OS, CPU, GPU, RAM, all macOS displays (logical/backing-pixel/visible sizes), and workflow rules. It excludes credentials, serial numbers, user/host names and window contents. Refresh it and `tools/list` after display changes. Native resource operations do not take summary; the two tool bridges do.
+
+Use `browser_open` (not `open_browser`) for an isolated background Chrome window. Default dimensions are 1000 by 600 logical points, reduced to fit smaller displays. Schema maxima follow the current primary display's logical resolution; runtime and native launch validate again. The actual window is centered/fitted to the visible work area, never enlarged to Retina pixel dimensions. Both the browser tool and computer action share this rule. Inspect returned `browser_size` and actual screenshot dimensions rather than assuming the requested size.
+
+Image outputs carry byte-verified `width`, `height`, `format`, and `image_metadata`; screenshots also retain `screen_width` / `screen_height`. MCP image blocks expose `_meta["lessagent/image"]` and compatibility dimension aliases. Pass actual screenshot dimensions with pixel coordinates. A client-specific `fovea` or inspector field is not a standard MCP requirement and may still be omitted by its adapter. No fictitious crop is emitted.
+
+Direct screenshots now default to project `output/computer/`. Preserve internal agent iteration/continuity locations but copy important finished binaries, images, 3D files and other deliverables to project `output/`. Keep source code in its source directories and do not overwrite unrelated output. End each completed task with a factual summary of changes, artifact paths, tests/results and remaining limitations. Changing source does not deploy the running backend.
 
 Initialization, tool descriptions, and successful workspace open/list responses instruct clients to read workspace-root `Agents.md` first with `read_file`. Try `AGENTS.md` when the first spelling is absent; if neither exists, report that and proceed. Follow `has_more` / `next_offset` until guidance is fully read. This is client workflow guidance, not a server-side assertion that a client actually read or obeyed the file.
 

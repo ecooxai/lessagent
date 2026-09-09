@@ -1,0 +1,82 @@
+   Compiling ring v0.17.14
+   Compiling rustls-webpki v0.103.15
+   Compiling rustls v0.23.43
+   Compiling tokio-rustls v0.26.5
+   Compiling hyper-rustls v0.27.9
+   Compiling reqwest v0.12.28
+   Compiling lessagent v0.1.0 (/Users/ecoo/project/agent/lessagent)
+    Finished `test` profile [unoptimized + debuginfo] target(s) in 6.69s
+     Running unittests src/lib.rs (target/debug/deps/lessagent-fbce1dd9499e5125)
+
+running 56 tests
+test agent::completion_tests::plain_answers_finish_but_action_tasks_keep_verification ... ok
+test agent::completion_tests::normal_agent_screenshot_result_keeps_path_without_binary_payload ... ok
+test agent::completion_tests::light_history_keeps_only_two_bounded_messages ... ok
+test agent::completion_tests::verification_requires_a_current_non_placeholder_command ... ok
+test computer::tests::background_requires_explicit_window_and_owner ... ok
+test computer::tests::background_routing_never_falls_back_to_system_pointer ... ok
+test computer::tests::background_validates_whole_path_before_input ... ok
+test computer::tests::browser_bounds_use_live_logical_resolution_not_retina_pixels ... ok
+test agent::completion_tests::light_computer_protocol_accepts_json_and_readable_lines ... ok
+test computer::tests::browser_defaults_fit_small_displays_and_unknown_geometry_is_explicit ... ok
+test computer::tests::common_validation_rejects_malformed_fields_before_native_events ... ok
+test computer::tests::drag_aliases_validate_full_integer_range ... ok
+test computer::tests::drag_normalization_accepts_from_and_to_pairs ... ok
+test computer::tests::drag_normalization_keeps_omitted_axis_at_start ... ok
+test computer::tests::invalid_drag_is_rejected_before_backend_input ... ok
+test computer::tests::macos_native_backend_contains_no_global_input_api ... ok
+test computer::tests::macos_rejects_explicit_desktop_for_every_action ... ok
+test computer::tests::path_drag_durations_and_dimensions_do_not_bypass_validation ... ok
+test computer::tests::scroll_distance_and_coordinates_validate_before_input ... ok
+test agent::completion_tests::continuity_preserves_active_command_and_detects_stalled_polls ... ok
+test agent::completion_tests::recent_ai_messages_pair_results_and_count_separately ... ok
+test context::tests::editable_defaults_exclude_noise ... ok
+test context::tests::image_estimate_is_bounded_for_all_aspect_ratios ... ok
+test agent::completion_tests::reviews_use_only_selected_files ... ok
+test context::tests::current_agent_output_includes_all_iterations_and_files ... ok
+test context::tests::ignores_nested_files_and_blocks_escape ... ok
+test context::tests::inventory_and_bundle_share_only_latest_output ... ok
+test image_content::tests::encoded_geometry_overrides_stale_dimensions_and_survives_mcp ... ok
+test image_content::tests::invalid_or_mislabeled_images_do_not_create_metadata ... ok
+test mcp::tests::adding_required_parameters_is_idempotent ... ok
+test agent::completion_tests::light_context_sends_project_contents_and_refreshes_each_scan ... ok
+test context::tests::text_and_image_token_rules ... ok
+test mcp::tests::handshake_and_workspace_bootstrap_include_read_first_guidance ... ok
+test mcp::tests::resource_protocol_and_bridge_errors_are_safe_bootstrap_calls ... ok
+test mcp::tests::summary_validation_matches_schema_limits_and_handles_unicode ... ok
+test computer::tests::browser_open_validates_before_launching_any_process ... ok
+test mcp::tests::every_mcp_tool_requires_summary_without_changing_internal_tools ... ok
+test provider::tests::stable_prefix_cache_options_are_provider_and_model_aware ... ok
+test provider::tests::usage_excludes_cached_input ... ok
+test resources::tests::discovery_is_single_page_and_bootstrap_readable ... ok
+test resources::tests::linux_memory_units_and_missing_values_are_not_fabricated ... ok
+test mcp::tests::every_tool_rejects_invalid_summaries_before_dispatch ... ok
+test resources::tests::uri_allowlist_never_reads_paths_or_fetches_network_content ... ok
+test server::tests::automatic_observations_drop_binary_only_at_browser_api_boundary ... ok
+test server::tests::non_screenshot_results_are_unchanged ... ok
+test server::tests::normal_api_screenshot_keeps_path_but_drops_image_bytes ... ok
+test resources::tests::resource_contains_workflows_and_honest_unavailable_snapshot ... ok
+test provider::tests::provider_tool_roundtrips ... ok
+test state::archive_tests::large_events_are_preserved_on_disk_and_migration_is_idempotent ... ok
+test mcp::tests::validation_blocks_file_side_effects_and_preserves_success_and_error_results ... ok
+test terminal::tests::deep_scrollback_survives_resize_and_returns_to_live_screen ... ok
+test terminal::tests::pty_runs_and_retains_output ... ok
+test context::tests::threshold_is_strict ... ok
+test terminal::tests::restores_only_latest_thirty_without_retaining_screens ... ok
+test terminal::tests::busy_terminal_log_is_bounded_and_restorable ... ok
+test git::tests::branches_and_discard ... ok
+
+test result: ok. 56 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 1.59s
+
+     Running unittests src/main.rs (target/debug/deps/lessagent-c7f6d75e66b993b8)
+
+running 0 tests
+
+test result: ok. 0 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.00s
+
+   Doc-tests lessagent
+
+running 0 tests
+
+test result: ok. 0 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.00s
+

@@ -50,13 +50,17 @@ fn browser_size_schema_for(display: Option<&Value>) -> Value {
         ("width", "logical_width", 640, 1000),
         ("height", "logical_height", 480, 600),
     ] {
-        let maximum = display.and_then(|v| v[logical].as_f64())
-            .filter(|v| v.is_finite() && *v > 0.0).map(|v| v.floor() as u64);
+        let maximum = display
+            .and_then(|v| v[logical].as_f64())
+            .filter(|v| v.is_finite() && *v > 0.0)
+            .map(|v| v.floor() as u64);
         let mut schema = json!({"type":"integer", "minimum":minimum,
             "description":"Browser window size in logical points. Maximum is the current primary display, rechecked at launch; the actual window is fitted to its visible work area. See instruction.md. Not screenshot pixels."});
         if let Some(maximum) = maximum {
             schema["maximum"] = json!(maximum);
-            if maximum >= minimum { schema["default"] = json!(default.min(maximum)); }
+            if maximum >= minimum {
+                schema["default"] = json!(default.min(maximum));
+            }
         } else {
             schema["default"] = json!(default);
         }
@@ -69,9 +73,16 @@ fn validate_browser_size(args: &Value, properties: &Value) -> Result<()> {
         if let Some(value) = args.get(field) {
             let minimum = properties[field]["minimum"].as_u64().unwrap();
             let maximum = properties[field]["maximum"].as_u64();
-            if value.as_u64().is_none_or(|n| n < minimum || maximum.is_some_and(|m| n > m)) {
-                return Err(err(format!("{field} must be an integer >= {minimum} and no larger than the current primary display in logical points (maximum: {}). Read instruction.md or refresh tools/list; no browser was opened.",
-                    maximum.map(|v| v.to_string()).unwrap_or_else(|| "unavailable until launch".into()))));
+            if value
+                .as_u64()
+                .is_none_or(|n| n < minimum || maximum.is_some_and(|m| n > m))
+            {
+                return Err(err(format!(
+                    "{field} must be an integer >= {minimum} and no larger than the current primary display in logical points (maximum: {}). Read instruction.md or refresh tools/list; no browser was opened.",
+                    maximum
+                        .map(|v| v.to_string())
+                        .unwrap_or_else(|| "unavailable until launch".into())
+                )));
             }
         }
     }
@@ -122,6 +133,13 @@ pub fn action(args: &Value, capture: &Path) -> Result<Value> {
         }
         let mut result = json!({"path":capture,"mime":"image/png"});
         if let Some(info) = screen_info() {
+            // Preserve the existing logical geometry fields for older clients,
+            // but assign screenshot pixel dimensions from the artifact below.
+            if let Some(fields) = info.as_object() {
+                for (key, value) in fields {
+                    result[key] = value.clone();
+                }
+            }
             result["display"] = info;
         }
         let size = imagesize::size(capture)?;
@@ -1003,5 +1021,56 @@ mod tests {
         }))
         .expect_err("a drag without a destination must fail validation");
         assert!(error.to_string().contains("to_x"));
+    }
+    #[test]
+    fn browser_bounds_use_live_logical_resolution_not_retina_pixels() {
+        let display = json!({"logical_width":1512,"logical_height":982,"screen_width":3024,"screen_height":1964});
+        let schema = super::browser_size_schema_for(Some(&display));
+        assert_eq!(schema["width"]["maximum"], 1512);
+        assert_eq!(schema["height"]["maximum"], 982);
+        assert_eq!(schema["width"]["default"], 1000);
+        assert_eq!(schema["height"]["default"], 600);
+        assert!(super::validate_browser_size(&json!({"width":1512,"height":982}), &schema).is_ok());
+        for args in [
+            json!({"width":1513}),
+            json!({"height":983}),
+            json!({"width":3024}),
+            json!({"width":639}),
+            json!({"height":479}),
+            json!({"width":true}),
+            json!({"width":null}),
+            json!({"width":1000.5}),
+            json!({"height":"600"}),
+            json!({"width":-1}),
+        ] {
+            assert!(
+                super::validate_browser_size(&args, &schema).is_err(),
+                "{args}"
+            );
+        }
+        let large = super::browser_size_schema_for(Some(
+            &json!({"logical_width":4096,"logical_height":2160}),
+        ));
+        assert!(super::validate_browser_size(&json!({"width":4000,"height":2000}), &large).is_ok());
+        // A cached request that once fitted must be rejected after a display shrinks.
+        assert!(
+            super::validate_browser_size(&json!({"width":4000,"height":2000}), &schema).is_err()
+        );
+    }
+    #[test]
+    fn browser_defaults_fit_small_displays_and_unknown_geometry_is_explicit() {
+        let small = super::browser_size_schema_for(Some(
+            &json!({"logical_width":800,"logical_height":500}),
+        ));
+        assert_eq!(small["width"]["default"], 800);
+        assert_eq!(small["height"]["default"], 500);
+        let unknown = super::browser_size_schema_for(None);
+        assert!(unknown["width"].get("maximum").is_none());
+        assert!(unknown["height"].get("maximum").is_none());
+        let tiny = super::browser_size_schema_for(Some(
+            &json!({"logical_width":320,"logical_height":240}),
+        ));
+        assert!(tiny["width"].get("default").is_none());
+        assert!(super::validate_browser_size(&json!({"width":640}), &tiny).is_err());
     }
 }

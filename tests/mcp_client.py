@@ -10,8 +10,12 @@ from mcp.client.stdio import stdio_client
 from mcp.client.streamable_http import streamablehttp_client
 
 BINARY = pathlib.Path(sys.argv[1] if len(sys.argv)>1 else 'target/debug/lessagent').resolve()
+INSTRUCTION_URI = 'lessagent://server/instruction.md'
 PIXEL = 'iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAQAAAC1HAwCAAAAC0lEQVR42mP8/x8AAwMCAO+jRZkAAAAASUVORK5CYII='
 
+
+# Deterministic 7x5 files; no Pillow dependency is needed to execute this suite.
+FORMAT_FIXTURES = {'jpeg': '/9j/4AAQSkZJRgABAQAAAQABAAD/2wBDAAgGBgcGBQgHBwcJCQgKDBQNDAsLDBkSEw8UHRofHh0aHBwgJC4nICIsIxwcKDcpLDAxNDQ0Hyc5PTgyPC4zNDL/2wBDAQkJCQwLDBgNDRgyIRwhMjIyMjIyMjIyMjIyMjIyMjIyMjIyMjIyMjIyMjIyMjIyMjIyMjIyMjIyMjIyMjIyMjL/wAARCAAFAAcDASIAAhEBAxEB/8QAHwAAAQUBAQEBAQEAAAAAAAAAAAECAwQFBgcICQoL/8QAtRAAAgEDAwIEAwUFBAQAAAF9AQIDAAQRBRIhMUEGE1FhByJxFDKBkaEII0KxwRVS0fAkM2JyggkKFhcYGRolJicoKSo0NTY3ODk6Q0RFRkdISUpTVFVWV1hZWmNkZWZnaGlqc3R1dnd4eXqDhIWGh4iJipKTlJWWl5iZmqKjpKWmp6ipqrKztLW2t7i5usLDxMXGx8jJytLT1NXW19jZ2uHi4+Tl5ufo6erx8vP09fb3+Pn6/8QAHwEAAwEBAQEBAQEBAQAAAAAAAAECAwQFBgcICQoL/8QAtREAAgECBAQDBAcFBAQAAQJ3AAECAxEEBSExBhJBUQdhcRMiMoEIFEKRobHBCSMzUvAVYnLRChYkNOEl8RcYGRomJygpKjU2Nzg5OkNERUZHSElKU1RVVldYWVpjZGVmZ2hpanN0dXZ3eHl6goOEhYaHiImKkpOUlZaXmJmaoqOkpaanqKmqsrO0tba3uLm6wsPExcbHyMnK0tPU1dbX2Nna4uPk5ebn6Onq8vP09fb3+Pn6/9oADAMBAAIRAxEAPwDzKiiivUPLP//Z', 'gif': 'R0lGODdhBwAFAIEAABQ8WgAAAAAAAAAAACwAAAAABwAFAAAIDAABCBxIsKDBgwcDAgA7', 'webp': 'UklGRjQAAABXRUJQVlA4ICgAAACQAQCdASoHAAUAAUAmJYgCdLoAA5gA/vjqf+j64RZGX+N8QXtSYAAA'}
 
 class ProviderFixture(BaseHTTPRequestHandler):
     """Keep delegated-job tests deterministic and off real model accounts."""
@@ -51,10 +55,43 @@ def payload(result):
 def visible_text(result):
     return '\n'.join(c.text for c in result.content if c.type=='text')
 
+def check_image_metadata(result, width, height):
+    data = payload(result)
+    image = next(c for c in result.content if c.type == 'image')
+    wire = image.model_dump(by_alias=True, exclude_none=True)
+    meta = wire['_meta']['lessagent/image']
+    assert (data['width'], data['height']) == (width, height)
+    assert (meta['width'], meta['height']) == (width, height)
+    assert (wire['width'], wire['height']) == (width, height)
+    assert meta == data['image_metadata'] and meta['units'] == 'pixels'
+    assert meta['mimeType'] == image.mimeType
+    assert meta['bytes'] == len(base64.b64decode(image.data))
+    assert 'fovea' not in wire
+
 async def exercise(session, root, label):
     init = await session.initialize()
     assert init.serverInfo.name == 'lessagent'
     assert all(word in init.instructions for word in ['Agents.md', 'AGENTS.md', 'read_file', 'first', 'summary', 'has_more'])
+    assert INSTRUCTION_URI in init.instructions
+    assert init.capabilities.resources is not None
+    assert not init.capabilities.resources.subscribe and not init.capabilities.resources.listChanged
+    listed_resources = await session.list_resources()
+    assert len(listed_resources.resources) == 1 and listed_resources.nextCursor is None
+    resource = listed_resources.resources[0]
+    assert resource.name == 'instruction.md' and str(resource.uri) == INSTRUCTION_URI
+    assert resource.mimeType == 'text/markdown'
+    assert not (await session.list_resource_templates()).resourceTemplates
+    guide = (await session.read_resource(INSTRUCTION_URI)).contents[0]
+    assert str(guide.uri) == INSTRUCTION_URI and guide.mimeType == 'text/markdown'
+    for word in ['Agents.md', '1000 by 600', 'output/', '3D', 'final summary', 'CPU', 'GPU', 'RAM', 'screen_width']:
+        assert word in guide.text, word
+    system = guide.model_dump(by_alias=True)['_meta']['lessagent/system']
+    assert system['os'] and system['process_architecture'] and system['observed_at_unix_ms'] > 0
+    assert not system['computer_control_enabled'], 'Guide must be readable while computer control is disabled'
+    if sys.platform == 'darwin':
+        assert 'probe_status' not in system, system
+        assert system['cpu']['logical_cores'] > 0 and system['ram']['total_bytes'] > 0
+        assert isinstance(system['gpus'], list) and isinstance(system['displays'], list)
     await session.send_ping()
     definitions = {t.name:t for t in (await session.list_tools()).tools}
     assert {'bash','python','shell','computer','write_image','read_file'} <= definitions.keys()
@@ -77,6 +114,17 @@ async def exercise(session, root, label):
         rejected = await session.call_tool(tool.name, {})
         assert rejected.isError and 'summary' in visible_text(rejected), (tool.name, rejected)
         assert (await session.call_tool(tool.name, None)).isError
+    for name in ['list_resources', 'read_resource', 'workspace_list', 'read_file']:
+        annotations = definitions[name].annotations
+        assert annotations.readOnlyHint and not annotations.destructiveHint and not annotations.openWorldHint
+    for name in ['computer', 'browser_open']:
+        fields = definitions[name].inputSchema['properties']
+        assert fields['width'] == system['browser_size_schema']['width']
+        assert fields['height'] == system['browser_size_schema']['height']
+    if system.get('displays'):
+        primary = next(display for display in system['displays'] if display['primary'])
+        assert definitions['browser_open'].inputSchema['properties']['width']['maximum'] == primary['logical_width']
+        assert definitions['browser_open'].inputSchema['properties']['height']['maximum'] == primary['logical_height']
     assert 'distance' in definitions['computer'].inputSchema['properties']
     assert 'background-only' in definitions['computer'].description
     assert '4 KB excerpt' in definitions['read_file'].description and '8 KB' in definitions['read_file'].description
@@ -89,6 +137,16 @@ async def exercise(session, root, label):
         assert result.content[0].type == 'text'
         assert result.content[0].text == 'Call summary (client-provided intent): ' + summary.strip(), result
         return result
+
+    discovered = payload(await invoke('list_resources'))
+    assert discovered['resources'][0]['uri'] == INSTRUCTION_URI
+    via_tool = await invoke('read_resource', uri=INSTRUCTION_URI)
+    assert 'Live host system information' in visible_text(via_tool)
+    bridge_guide = payload(via_tool)['contents'][0]
+    assert bridge_guide['uri'] == INSTRUCTION_URI and bridge_guide['mimeType'] == 'text/markdown'
+    assert bridge_guide['_meta']['lessagent/system']['observed_at_unix_ms'] >= system['observed_at_unix_ms']
+    assert (await invoke('read_resource', uri='file:///etc/passwd')).isError
+    assert (await invoke('read_resource')).isError
 
     opened = await invoke('workspace_open', path=str(root), summary='Open the fixture workspace before reading its guidance.')
     assert 'Agents.md' in opened.structuredContent['instructions']
@@ -185,12 +243,23 @@ async def exercise(session, root, label):
     for result in [result,await call('read_file',path=f'{label}/pixel.png')]:
         image=next(c for c in result.content if c.type=='image')
         assert image.mimeType=='image/png' and base64.b64decode(image.data)==base64.b64decode(PIXEL)
+        check_image_metadata(result, 1, 1)
     image_read=await call('read_file',path=f'{label}/pixel.png')
     assert 'Image file:' in visible_text(image_read)
     assert (root/label/'pixel.png').read_bytes()==base64.b64decode(PIXEL)
     for path,image in [('../escape.png',block),('bad.png',dict(block,data='not-base64')),('bad.jpg',block),('bad.png',dict(block,mimeType='image/jpeg'))]:
         assert (await call('write_image',path=path,image=image)).isError
     assert not (root/'bad.png').exists()
+    for format, encoded in FORMAT_FIXTURES.items():
+        path = f'{label}/dimensions.{format}'
+        uploaded = await call('write_image', path=path, image={'type':'image','mimeType':'image/'+format,'data':encoded})
+        reread = await call('read_file', path=path)
+        for image_result in [uploaded, reread]:
+            check_image_metadata(image_result, 7, 5)
+            data = payload(image_result)
+            assert data['format'] == format and data['image_metadata']['format'] == format
+            assert base64.b64decode(next(c.data for c in image_result.content if c.type=='image')) == base64.b64decode(encoded)
+
     # A real PNG larger than common 2 MiB HTTP defaults, with incompressible pixels.
     def chunk(kind, data):
         return struct.pack('>I',len(data))+kind+data+struct.pack('>I',zlib.crc32(kind+data))
@@ -198,6 +267,7 @@ async def exercise(session, root, label):
     png=b'\x89PNG\r\n\x1a\n'+chunk(b'IHDR',struct.pack('>IIBBBBB',1024,800,8,2,0,0,0))+chunk(b'IDAT',zlib.compress(pixels))+chunk(b'IEND',b'')
     big=await call('write_image',path=f'{label}/large.png',image=dict(block,data=base64.b64encode(png).decode()))
     assert payload(big)['bytes']==len(png)
+    check_image_metadata(big, 1024, 800)
     assert base64.b64decode(next(c.data for c in big.content if c.type=='image'))==png
     assert (await call('python')).isError
     assert (await call('not_a_tool')).isError
@@ -220,7 +290,7 @@ async def exercise(session, root, label):
     assert ProviderFixture.requests, 'Delegated job never reached the local fixture'
     assert definitions.keys() <= called, definitions.keys() - called
     print(f'{label}: all {len(definitions)} tools, read-first guidance, summary validation/metadata, '
-          'Bash/Python, PTY input/stop, file/image roundtrips, local agent run/status PASS')
+          'resources/read+list, host info, image dimensions, Bash/Python, PTY input/stop, file/image roundtrips, local agent run/status PASS')
 
 async def main(root, port):
     data=root/'data'; work=root/'workspace'; work.mkdir()
@@ -263,6 +333,13 @@ async def main(root, port):
                               ({'jsonrpc':'2.0','id':1,'method':'missing'},-32601),
                               ({'jsonrpc':'1.0','id':1,'method':'ping'},-32600)]:
                 assert rpc(body)[1]['error']['code']==code
+            for method, params, code in [
+                ('resources/read', {}, -32602), ('resources/read', {'uri': None}, -32602),
+                ('resources/read', {'uri': 'file:///etc/passwd'}, -32002),
+                ('resources/read', {'uri': INSTRUCTION_URI + '?x=1'}, -32002),
+                ('resources/list', {'cursor': 'bogus'}, -32602),
+                ('resources/templates/list', {'cursor': 7}, -32602)]:
+                assert rpc({'jsonrpc':'2.0','id':1,'method':method,'params':params})[1]['error']['code'] == code
             assert rpc({'jsonrpc':'2.0','method':'notifications/initialized'})==(202,None)
             assert rpc({'jsonrpc':'2.0','id':1,'method':'tools/call','params':{'name':'workspace_list'}})[1]['result']['isError']
             for malformed in [None, [], 'not-an-object', 42, False]:

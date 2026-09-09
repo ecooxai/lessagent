@@ -91,6 +91,30 @@ State uses atomic file replacement, owner-only credential files, and a single-se
 
 ## MCP
 
+### Server instructions, system information, and artifacts
+
+Read `lessagent://server/instruction.md` first. The server advertises MCP resources and implements `resources/list`, `resources/read`, and an empty `resources/templates/list`. The resource contains live OS/CPU/GPU/RAM information, macOS screen resolutions in logical points and backing pixels, coding/computer-control instructions, and completion/output rules. It is available before opening a workspace and while computer control is disabled. Resource URIs are allowlisted; this endpoint never opens arbitrary files or fetches arbitrary URLs. Hardware fields that cannot be detected are explicitly unavailable. Resource subscriptions are not supported; re-read after a display/configuration change. Host information is visible to anyone who can reach the existing MCP endpoint; expose it only through trusted connections.
+
+Tool-only clients can use the read-only `list_resources` and `read_resource` tools instead. Both require `summary`, as do all other MCP tools. Native protocol resource requests do not require a summary:
+
+```json
+{"jsonrpc":"2.0","id":1,"method":"resources/list"}
+{"jsonrpc":"2.0","id":2,"method":"resources/read","params":{"uri":"lessagent://server/instruction.md"}}
+```
+
+Use project-root `output/` for important finished work: verified binaries, images, 3D files, renders, and other deliverables. Direct computer captures default to `output/computer/`; internal agent iteration artifacts keep their existing locations. Finish each task with a factual summary of changes, output paths, actual test results, and limitations.
+
+`browser_open` now defaults to **1000 × 600 logical points**. Both it and `computer` action `browser_open` advertise maxima based on the current primary display's logical resolution, and revalidate before launching Chrome. Windows are fitted and centered within its visible work area (excluding menu bar/Dock); `browser_size` reports requested/actual/maximum sizes. These are window dimensions, not Retina screenshot pixels. Refresh `tools/list` after changing resolution.
+
+Image responses provide actual encoded `width`, `height`, `format`, and `image_metadata`, plus `screen_width`/`screen_height` for screenshots. The MCP image block carries `_meta["lessagent/image"]` and compatibility aliases for clients that forward those fields. Use those verified pixel dimensions for coordinates, not requested window sizes. Client-private inspector fields such as `fovea` are not fabricated; an adapter may still ignore extension metadata.
+
+The focused macOS regression test verifies resource access, default and maximum-size windows, oversized-request rejection before launch, output paths, and image metadata through MCP and the browser API:
+
+```sh
+uv run --with 'mcp>=1.20,<2' tests/browser_geometry.py target/debug/lessagent
+```
+
+
 For a local MCP client that supports stdio, configure the absolute binary path:
 
 ```json

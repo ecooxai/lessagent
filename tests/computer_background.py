@@ -73,7 +73,18 @@ with tempfile.TemporaryDirectory(prefix='lessagent-background-test-', ignore_cle
             # prose before an image and is not necessarily a JSON object.
             structured=getattr(result,'structuredContent',None)
             if isinstance(structured,dict) and isinstance(structured.get('result'),dict):
-                return structured['result']
+                value=structured['result']
+                for image in [c for c in result.content if c.type=='image']:
+                    wire=image.model_dump(by_alias=True,exclude_none=True)
+                    raw=base64.b64decode(image.data)
+                    actual=struct.unpack('>II',raw[16:24])
+                    assert (value['width'],value['height'])==actual,value
+                    assert (value['screen_width'],value['screen_height'])==actual,value
+                    assert (wire['width'],wire['height'])==actual,wire.keys()
+                    assert wire['_meta']['lessagent/image']==value['image_metadata']
+                    assert value['image_metadata']['coordinate_space']=='window'
+                    assert value['image_metadata']['bytes']==len(raw)
+                return value
             for block in result.content:
                 if block.type=='text':
                     try:return json.loads(block.text)

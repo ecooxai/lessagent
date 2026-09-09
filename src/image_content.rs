@@ -22,8 +22,16 @@ pub fn attach(result: &mut Value, bytes: &[u8], mime: &str) -> Result<()> {
     let mut metadata = json!({"format":format, "mimeType":mime, "width":size.width,
         "height":size.height, "bytes":bytes.len(), "units":"pixels",
         "coordinate_space":result["coordinate_space"].as_str().unwrap_or("image")});
-    for key in ["logical_width", "logical_height", "window_id", "pid", "browser_chrome_captured"] {
-        if let Some(value) = result.get(key) { metadata[key] = value.clone(); }
+    for key in [
+        "logical_width",
+        "logical_height",
+        "window_id",
+        "pid",
+        "browser_chrome_captured",
+    ] {
+        if let Some(value) = result.get(key) {
+            metadata[key] = value.clone();
+        }
     }
     result["width"] = json!(size.width);
     result["height"] = json!(size.height);
@@ -49,7 +57,9 @@ pub fn mcp_block(image: &Value) -> Value {
     if let Some(metadata) = image.get("metadata") {
         block["_meta"] = json!({"lessagent/image":metadata});
         for key in ["width", "height", "format", "metadata"] {
-            if let Some(value) = image.get(key) { block[key] = value.clone(); }
+            if let Some(value) = image.get(key) {
+                block[key] = value.clone();
+            }
         }
     }
     block
@@ -61,7 +71,9 @@ mod tests {
     const PIXEL: &str = "iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAQAAAC1HAwCAAAAC0lEQVR42mP8/x8AAwMCAO+jRZkAAAAASUVORK5CYII=";
     #[test]
     fn encoded_geometry_overrides_stale_dimensions_and_survives_mcp() {
-        let bytes = base64::engine::general_purpose::STANDARD.decode(PIXEL).unwrap();
+        let bytes = base64::engine::general_purpose::STANDARD
+            .decode(PIXEL)
+            .unwrap();
         let mut value = json!({"screen_width":4000,"screen_height":3000,"width":null,"height":null,
             "coordinate_space":"window","logical_width":0.5,"logical_height":0.5,"window_id":7});
         attach(&mut value, &bytes, "image/png").unwrap();
@@ -76,12 +88,22 @@ mod tests {
         assert_eq!(block["height"], 1);
         assert_eq!(block["format"], "png");
         assert!(block.get("fovea").is_none());
-        assert_eq!(base64::engine::general_purpose::STANDARD.decode(block["data"].as_str().unwrap()).unwrap(), bytes);
+        assert_eq!(
+            base64::engine::general_purpose::STANDARD
+                .decode(block["data"].as_str().unwrap())
+                .unwrap(),
+            bytes
+        );
     }
     #[test]
     fn invalid_or_mislabeled_images_do_not_create_metadata() {
-        let bytes = base64::engine::general_purpose::STANDARD.decode(PIXEL).unwrap();
-        for (bytes, mime) in [(bytes.as_slice(), "image/jpeg"), (b"not an image".as_slice(), "image/png")] {
+        let bytes = base64::engine::general_purpose::STANDARD
+            .decode(PIXEL)
+            .unwrap();
+        for (bytes, mime) in [
+            (bytes.as_slice(), "image/jpeg"),
+            (b"not an image".as_slice(), "image/png"),
+        ] {
             let mut value = json!({});
             assert!(attach(&mut value, bytes, mime).is_err());
             assert_eq!(value, json!({}));
