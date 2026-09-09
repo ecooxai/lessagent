@@ -80,8 +80,6 @@ async fn run() -> Result<()> {
             "Use --passwd with start, restart, tui, serve, or no command",
         ));
     }
-    let token = std::fs::read_to_string(dir.join("token"))
-        .map_err(|_| err("Start lessagent serve first (use the same data directory)"))?;
     let client = reqwest::Client::new();
     let base = format!("http://127.0.0.1:{port}");
     if command == "mcp" {
@@ -93,7 +91,6 @@ async fn run() -> Result<()> {
                     let id = request.get("id").cloned();
                     match client
                         .post(format!("{base}/mcp"))
-                        .bearer_auth(&token)
                         .json(&request)
                         .send()
                         .await
@@ -119,6 +116,8 @@ async fn run() -> Result<()> {
         }
         return Ok(());
     }
+    let token = std::fs::read_to_string(dir.join("token"))
+        .map_err(|_| err("Start lessagent serve first (use the same data directory)"))?;
     let api = |action: &str, body: Value| {
         client
             .post(format!("{base}/api/action/{action}"))

@@ -1,0 +1,842 @@
+diff --git a/README.md b/README.md
+index 761e087..29d1098 100644
+--- a/README.md
++++ b/README.md
+@@ -85,7 +85,7 @@ lessagent tool WORKSPACE_ID shell '{"command":"pwd","wait_ms":1000}'
+ 
+ Use `./target/release/lessagent` in place of `lessagent` unless the binary is on your PATH. `--port` and `--data-dir` work with every command; clients must match the server. Defaults are port `3210` and `$XDG_DATA_HOME/lessagent` or `~/.local/share/lessagent`. Environment alternatives are `LESSAGENT_PORT` and `LESSAGENT_DATA_DIR`.
+ 
+-State uses atomic file replacement, owner-only credential files, and a single-server lock per data directory. The HTTP server listens on all IPv4 interfaces (`0.0.0.0`), accepts requests using the server IP address or hostname, validates browser Origin, and rejects cross-site browser requests. Open `http://SERVER_IP:3210/` from another device; remote access requires a password configured with `lessagent --passwd PASSWORD`, or a valid token. Loopback browser API access needs no token unless a password is configured. MCP and server administration always require the bearer token. Optional URL fragment tokens are moved into browser session storage and removed from the address bar.
++State uses atomic file replacement, owner-only credential files, and a single-server lock per data directory. The HTTP server listens on all IPv4 interfaces (`0.0.0.0`), accepts requests using the server IP address or hostname, validates browser Origin, and rejects cross-site browser requests. Open `http://SERVER_IP:3210/` from another device; remote access requires a password configured with `lessagent --passwd PASSWORD`, or a valid token. Loopback browser API access needs no token unless a password is configured. Server administration requires the bearer token. The `/mcp` endpoint is public and requires neither a password nor a token, including remote connections. Optional URL fragment tokens are moved into browser session storage and removed from the address bar.
+ 
+ ## MCP
+ 
+@@ -104,7 +104,34 @@ For a local MCP client that supports stdio, configure the absolute binary path:
+ 
+ The stdio process bridges to the running backend. Add matching `--port` and `--data-dir` arguments when using custom settings. Tools include workspace open/list, agent run/status, file operations, PTYs, and computer control.
+ 
+-Clients supporting stateless MCP HTTP POST can use `http://127.0.0.1:3210/mcp` with `Authorization: Bearer <token from data-dir/token>`. JSON-RPC notifications return HTTP 202. The implementation supports initialization, ping, tool discovery, and calls; it does not provide an SSE event stream. A cloud-hosted chat such as ChatGPT cannot reach your loopback address directly; connecting it requires a compatible trusted bridge and authentication outside this project's local server.
++Clients supporting stateless MCP HTTP POST can use `http://127.0.0.1:3210/mcp` without authentication headers. MCP remains public even when a browser password is set. JSON-RPC notifications return HTTP 202. The implementation supports initialization, ping, tool discovery, and calls; it does not provide an SSE event stream. A cloud-hosted chat such as ChatGPT cannot reach your loopback address directly; connecting it requires a compatible trusted bridge outside this project's local server.
++
++MCP execution tools are `bash` (`command`) and `python` (`code`, Python 3), with `shell` retained as a Bash alias. Both start workspace PTYs and return `terminal_id`, `output`, `exited`, and `exit_code`. `wait_ms` waits up to 10 seconds; use `terminal_read`, `terminal_write`, and `terminal_stop` for ongoing commands. Each Python call starts a fresh interpreter; stdin stays available through `terminal_write`.
++
++Scroll at a screenshot position with this `computer` tool argument object (replace the workspace and target IDs):
++
++```json
++{"workspace":"WORKSPACE_ID","action":"scroll","window_id":123,"pid":456,"x":800,"y":500,"distance":10,"screen_width":1000,"screen_height":750}
++```
++
++`distance: 10` scrolls **up 10 lines**; `distance: -10` scrolls down. Accepted distance is -100 through 100. Legacy `delta` keeps its existing opposite sign (positive down); passing both is an error. Background mode requires `x,y`; desktop mode accepts `x,y` or uses the current pointer if both are omitted. Input actions return an automatic screenshot after the existing two-second settling delay.
++
++To send an image to the MCP server, call `write_image` with a standard image block nested in its JSON arguments:
++
++```json
++{"workspace":"WORKSPACE_ID","path":"images/input.png","image":{"type":"image","mimeType":"image/png","data":"BASE64_ENCODED_IMAGE"}}
++```
++
++The tool validates base64, image headers/dimensions, MIME type, extension, size (20 MiB maximum), and workspace path boundaries before writing. Supported formats are PNG, JPEG, GIF, and WebP. The reply includes text metadata and a native MCP `image` content block containing the received image. `read_file` also returns image blocks for these formats, and `computer` returns PNG screenshot blocks. Input images are file uploads; no model vision request is made by `write_image`.
++
++The server negotiates MCP versions 2025-03-26, 2025-06-18, and 2025-11-25. The official Python SDK integration test covers HTTP and stdio:
++
++```sh
++uv run --with 'mcp>=1.20,<2' tests/mcp_client.py target/debug/lessagent
++uv run --with 'mcp>=1.20,<2' tests/computer_background.py target/debug/lessagent
++```
++
++The second test requires macOS Accessibility and Screen Recording access and an installed Chrome for its isolated native event fixture. It checks typing, modifier keys, dragging, scroll direction/position, and screenshot images through the MCP SDK; it saves evidence under `output/background-control/`. Add `--allow-foreground` to record focus changes without failing the event-delivery test, and `--desktop-scroll` to also verify scrolling with the shared system pointer. Chrome can activate asynchronously after background input; the report distinguishes focus during delivery from focus after the screenshot delay.
+ 
+ ## Development and validation
+ 
+@@ -119,7 +146,7 @@ node --check web/app.js
+ 
+ `python3 tests/legacy_startup.py target/release/lessagent` verifies migration from an older backend without administration endpoints. `tests/workspace_picker.cjs` exercises the picker DOM with jsdom; run it with `node` in an environment where jsdom is installed.
+ 
+-`python3 tests/startup.py` verifies automatic startup, app/MCP port logs, the startup menu, reconnection, TUI workspace opening and scrolling, detachment, stop/restart, token-free local access, password login and changes, password persistence, and MCP authentication.
++`python3 tests/startup.py` verifies automatic startup, app/MCP port logs, the startup menu, reconnection, TUI workspace opening and scrolling, detachment, stop/restart, token-free local access, password login and changes, password persistence, and public MCP access.
+ 
+ The smoke test starts an isolated backend and a deterministic Codex fixture. It checks authentication and origin boundaries, project context, model discovery, tool execution, cancellation, terminal survival without a browser, MCP over HTTP/stdio, and persistence after restart. It makes no paid API calls. Pass a binary path to test a release build: `python3 tests/smoke.py target/release/lessagent`.
+ 
+@@ -149,3 +176,72 @@ The agent requests a 0–10 self-assessed completion score and a Bash test comma
+ Agent messages offer an expandable “What was sent to AI” view with task/system/iteration prompts, model settings, and context file names (file contents stay hidden). Agent tabs keep separate messages, drafts, and context folders; one task runs per workspace at a time. Light desktop actions use `<computer>` JSON tags; take a screenshot first and pass its returned pixel dimensions with pointer coordinates. On macOS, Lessagent converts those screenshot pixels to Quartz logical points for Retina displays. Screenshots are saved as real artifacts under the current `agent/output` iteration and are attached to the next request. Model discovery runs at backend startup and when an Agent tab opens. Codex discovery uses the installed CLI version (only `codex --version`, never the CLI agent); `LESSAGENT_CODEX_CLIENT_VERSION` can override it.
+ 
+ Large job events (over 16 KiB) are archived under `events/` in the data directory. State and UI polls contain small references; the History/Agent view loads original event details when **Load details** is clicked. Existing events migrate automatically on startup. Archived terminal screens are reconstructed only for a view request and released afterward; live PTYs continue maintaining their virtual screen while their tabs are inactive. The web terminal waits for output notifications, sends input directly to the PTY, and repaints changed rows only while focused. Background project scans do not run for terminal tabs.
++
++### macOS background computer control
++
++The `computer` tool supports a separate light blue virtual pointer (`#7DD4FF`) for
++window-targeted macOS input. It turns darker blue (`#2563EB`) while the left
++button is pressed or dragging, then returns to light blue on release. Call `{"action":"windows"}` first, choose a window,
++then pass its `window_id` and `pid` on screenshots and input actions. The same tool
++is available through the CLI, MCP, normal agents, and Light mode. Computer control
++must be enabled in Settings; macOS Accessibility and Screen Recording permissions
++are still required.
++
++```json
++{"action":"screenshot","window_id":123,"pid":456}
++{"action":"click","window_id":123,"pid":456,"x":440,"y":194,"screen_width":2000,"screen_height":1500}
++{"action":"type","window_id":123,"pid":456,"text":"Hello from the background"}
++{"action":"drag","window_id":123,"pid":456,"path":[[500,220],[630,618],[291,372],[709,372],[370,618],[500,220]],"duration":3}
++```
++
++Take one explicit screenshot for the initial view. After every successful move,
++click, drag, type, key, or scroll, Lessagent waits two seconds and captures the
++same target window automatically before returning the tool result. Agent and
++Light mode captures go into the current `agent/output` iteration; direct calls
++use `agent/output/computer`. MCP returns a PNG image content block containing
++base64, alongside the saved path and dimensions. The next model request receives
++the observation, so it does not need to issue a separate screenshot action.
++Desktop controls similarly capture the desktop. Control and observation are
++serialized so concurrent tool calls cannot interleave during the settling delay.
++If capture fails after input, the result preserves input success and reports
++`screenshot_error`; capture again rather than repeating the input blindly.
++
++Replace the example IDs with discovery results. Coordinates start at the target
++window's top-left, including its title bar. Without screenshot dimensions they
++are logical macOS points. With dimensions they are pixels of that window's
++screenshot. A path draws one continuous stroke with a single button-down/up pair;
++all points are validated before sending input. Background scrolling also needs
++`x,y` to identify the location inside the window. Click a text field before typing
++or using editing keys. `mode:"background"` requires an explicit window; missing or
++stale targets fail instead of falling back to global input.
++
++The pointer overlay cannot take focus or intercept clicks. Targeted screenshots
++include the last virtual pointer position for that window; `show_pointer:false`
++hides the overlay. The native helper exits after each action, so background
++control adds no idle process, timer, or polling loop. Swift is required at build
++time on macOS; the compiled helper is embedded in the shipped binary.
++
++This uses process-directed Quartz events, AppKit event metadata, and the private
++`CGEventSetWindowLocation` symbol resolved at runtime. Missing support produces an
++error. Windows may be covered by other apps, but must remain on the current
++desktop and not minimized. Application support varies: Chrome canvas drawing,
++Unicode text, and ordinary editing keys work in the integration test. Some
++Command-key menu shortcuts are ignored while Chrome is inactive. Games, protected
++surfaces, app dialogs, and other macOS versions need separate validation. There is
++no automatic foreground-input fallback. Desktop actions without a window target
++retain the existing shared-pointer behavior.
++
++Run the native Chrome regression with:
++
++```sh
++cargo build --release
++python3 tests/computer_background.py target/release/lessagent
++```
++
++The test opens an isolated Chrome profile with a local canvas drawing web app,
++restores the previously foreground application after Chrome launches, and sends
++all input through Lessagent's native computer tool. It checks trusted/unfocused
++page events, text editing, continuous star geometry, scrolling, invalid targets,
++and foreground/cursor observations. It saves the actual window screenshot and a
++JSON evidence report under `output/background-control`, then closes its test
++Chrome and server. It does not use CDP, WebDriver, or JavaScript input injection.
+diff --git a/src/agent.rs b/src/agent.rs
+index 594eb70..0cdc414 100644
+--- a/src/agent.rs
++++ b/src/agent.rs
+@@ -269,7 +269,7 @@ fn tag_blocks<'a>(text: &'a str, name: &str) -> Vec<&'a str> {
+ fn valid_light_computer_action(value: &Value) -> bool {
+     matches!(
+         value["action"].as_str(),
+-        Some("screenshot" | "move" | "click" | "drag" | "type" | "key" | "scroll")
++        Some("windows" | "screenshot" | "move" | "click" | "drag" | "type" | "key" | "scroll")
+     )
+ }
+ 
+@@ -314,7 +314,14 @@ fn parse_light_computer_line(line: &str) -> Option<Value> {
+             let raw = raw.trim().trim_matches(['"', '\'']);
+             if matches!(
+                 key,
+-                "x" | "y" | "to_x" | "to_y" | "screen_width" | "screen_height" | "delta"
++                "x" | "y"
++                    | "to_x"
++                    | "to_y"
++                    | "screen_width"
++                    | "screen_height"
++                    | "window_id"
++                    | "pid"
++                    | "delta"
+             ) {
+                 if let Ok(number) = raw.parse::<i64>() {
+                     object.insert(key.into(), json!(number));
+@@ -778,6 +785,7 @@ async fn run(
+     let mut turns = vec![];
+     let mut progress = String::new();
+     let mut screenshots = vec![];
++    let mut latest_computer_image: Option<context::Image> = None;
+     let mut context_files: Vec<String> = vec![];
+     let mut project_file_tokens: Vec<Value> = vec![];
+     let mut latest_reply = String::new();
+@@ -869,6 +877,14 @@ async fn run(
+                 ),
+             )];
+             turns[0].images = images;
++            // Normal mode rebuilds turns from context each iteration. Preserve
++            // the latest computer observation even when no test command ran.
++            if let Some(image) = &latest_computer_image {
++                turns[0]
++                    .images
++                    .retain(|existing| existing.path != image.path);
++                turns[0].images.push(image.clone());
++            }
+         }
+         if w.mode == "light" {
+             let b = bundle(
+@@ -921,7 +937,7 @@ async fn run(
+         // Stable messages precede the changing context to preserve the cacheable prefix.
+         let instructions = if w.mode == "light" {
+             format!(
+-                "Light mode has no native tools or function calls. Work directly from the complete selected project context and every file currently under agent/output; output-history and agent continuity records are excluded. Reply in Markdown using separate <review>current status</review>, optional <summary>concise factual handoff</summary> (saved in the internal continuity directory), <scores>0-10</scores> (or <score>0-10</score>), <plan>next concrete step</plan>, and <done>true</done> or <done>false</done> tags. Put every command that must run in <bash>...</bash> or <python>...</python>; do not merely describe a command. Create, compile, test, or render the requested deliverable with those blocks. For desktop control, put one JSON object or array in <computer>...</computer> (for example {{\"action\":\"screenshot\"}} or {{\"action\":\"click\",\"x\":420,\"y\":180,\"screen_width\":1440,\"screen_height\":900}}); take a screenshot first, use its reported screen_width/screen_height for pointer coordinates, and wait for the result before clicking. Lessagent converts screenshot pixels to macOS logical points on Retina displays and returns the action result. LESSAGENT_OUTPUT_DIR is the artifact-only iteration directory: put real deliverables there, such as compiled binaries, screenshots, images, or other files the user needs. Do not create actions.json, result.json, state.json, summary.md, or any .log file in LESSAGENT_OUTPUT_DIR. LESSAGENT_LOG_DIR points to an internal continuity directory for command logs and other bookkeeping; redirect stdout and stderr there when a log is useful (for example: command > $LESSAGENT_LOG_DIR/build.log 2>&1). If an output is not pure text, use a command to verify only its text metadata or text portion; do not try to prove binary bytes with pasted text. For binary outputs such as images, write the file under LESSAGENT_OUTPUT_DIR and leave it for the next request, when it will be attached for visual review. Lasting deliverables belong in the project outside temporary iteration folders. Inspect every current agent/output file and the next request will include any supported images. Do not use echo test pass or other placeholder proof, do not repeat completed work, and do not claim success without an actual result. Include <done>true</done> only after the requested behavior is implemented and meaningfully verified with a score of at least {}. Keep the response concise and executable.",
++                "Light mode has no native tools or function calls. Work directly from the complete selected project context and every file currently under agent/output; output-history and agent continuity records are excluded. Reply in Markdown using separate <review>current status</review>, optional <summary>concise factual handoff</summary> (saved in the internal continuity directory), <scores>0-10</scores> (or <score>0-10</score>), <plan>next concrete step</plan>, and <done>true</done> or <done>false</done> tags. Put every command that must run in <bash>...</bash> or <python>...</python>; do not merely describe a command. Create, compile, test, or render the requested deliverable with those blocks. For macOS background control, first use action windows, select window_id and pid, and pass both for every screenshot and input action. Coordinates are window-local; pass the dimensions returned by that window screenshot, never desktop dimensions. A drag supports path:[[x,y],...] for continuous drawing. Background input uses a light blue virtual pointer, dark blue while left-pressed or dragging, and preserves the shared system pointer. Take one initial screenshot; every input action then waits two seconds and automatically saves and attaches a fresh screenshot for the next request. Use that observation to decide the next action; do not request redundant screenshots. For desktop control, put one JSON object or array in <computer>...</computer> (for example {{\"action\":\"screenshot\"}} or {{\"action\":\"click\",\"x\":420,\"y\":180,\"screen_width\":1440,\"screen_height\":900}}); take a screenshot first, use its reported screen_width/screen_height for pointer coordinates, and wait for the result before clicking. Lessagent converts screenshot pixels to macOS logical points on Retina displays and returns the action result. LESSAGENT_OUTPUT_DIR is the artifact-only iteration directory: put real deliverables there, such as compiled binaries, screenshots, images, or other files the user needs. Do not create actions.json, result.json, state.json, summary.md, or any .log file in LESSAGENT_OUTPUT_DIR. LESSAGENT_LOG_DIR points to an internal continuity directory for command logs and other bookkeeping; redirect stdout and stderr there when a log is useful (for example: command > $LESSAGENT_LOG_DIR/build.log 2>&1). If an output is not pure text, use a command to verify only its text metadata or text portion; do not try to prove binary bytes with pasted text. For binary outputs such as images, write the file under LESSAGENT_OUTPUT_DIR and leave it for the next request, when it will be attached for visual review. Lasting deliverables belong in the project outside temporary iteration folders. Inspect every current agent/output file and the next request will include any supported images. Do not use echo test pass or other placeholder proof, do not repeat completed work, and do not claim success without an actual result. Include <done>true</done> only after the requested behavior is implemented and meaningfully verified with a score of at least {}. Keep the response concise and executable.",
+                 settings.quality_threshold
+             )
+         } else {
+@@ -1079,11 +1095,15 @@ async fn run(
+                 crate::computer::screen_info().and_then(|info| screen_dimensions(&info));
+             for mut arguments in light_computer_actions(&reply.text) {
+                 computer_index += 1;
+-                if arguments["action"] == "screenshot" {
++                if arguments["action"] != "windows" {
+                     arguments["capture_path"] = json!(format!(
+                         "{artifact_relative}/computer-{computer_index:02}.png"
+                     ));
+-                } else if let Some((width, height)) = light_screen {
++                }
++                if arguments["action"] != "screenshot"
++                    && arguments.get("window_id").is_none()
++                    && let Some((width, height)) = light_screen
++                {
+                     // A model may omit the dimensions after a screenshot. Keep
+                     // the coordinate space explicit so macOS can scale Retina
+                     // pixels into Quartz points consistently.
+@@ -1115,7 +1135,9 @@ async fn run(
+                         }),
+                     };
+                 let result = without_embedded_image(&result);
+-                if let Some(dimensions) = screen_dimensions(&result) {
++                if arguments.get("window_id").is_none()
++                    && let Some(dimensions) = screen_dimensions(&result)
++                {
+                     light_screen = Some(dimensions);
+                 }
+                 app.event(
+@@ -1363,7 +1385,7 @@ async fn run(
+                 call.arguments["command"] =
+                     json!(format!("export LESSAGENT_OUTPUT_DIR='{dir}'\n{command}"));
+             }
+-            if call.name == "computer" && call.arguments["action"] == "screenshot" {
++            if call.name == "computer" && call.arguments["action"] != "windows" {
+                 // Keep screenshots produced by native tool calls in the same
+                 // user-visible artifact tree as Light-mode captures.
+                 call.arguments["capture_path"] = json!(format!(
+@@ -1441,14 +1463,18 @@ async fn run(
+                     )?;
+                     crate::state::atomic_write(&capture, &bytes)?;
+                 }
+-                screenshots = vec![context::Image {
++                let image = context::Image {
+                     path,
+                     mime: result["image"]["mime"]
+                         .as_str()
+                         .unwrap_or("image/png")
+                         .into(),
+                     data: data.into(),
+-                }];
++                };
++                if call.name == "computer" {
++                    latest_computer_image = Some(image.clone());
++                }
++                screenshots = vec![image];
+             }
+             results
+                 .results
+diff --git a/src/computer.rs b/src/computer.rs
+index 2bc52e8..849c4d0 100644
+--- a/src/computer.rs
++++ b/src/computer.rs
+@@ -5,7 +5,7 @@ use std::path::Path;
+ pub fn capabilities() -> Value {
+     #[cfg(target_os = "macos")]
+     {
+-        json!({"platform":"macos","backend":"CoreGraphics + screencapture","note":"Enable Accessibility for the backend terminal, and Screen Recording for screenshots."})
++        json!({"platform":"macos","backend":"CoreGraphics + AppKit + screencapture","background_control":true,"pointer_color":"#7DD4FF","note_background":"Use action windows, then window_id and pid for window-local input or screenshots. Process-directed events keep the system pointer independent; app support varies. Target must not be minimized.","note":"Enable Accessibility for the backend terminal, and Screen Recording for screenshots."})
+     }
+     #[cfg(not(target_os = "macos"))]
+     {
+@@ -40,6 +40,20 @@ pub fn screen_info() -> Option<Value> {
+     }
+ }
+ pub fn action(args: &Value, capture: &Path) -> Result<Value> {
++    #[cfg(target_os = "macos")]
++    if args["action"] == "windows"
++        || args.get("window_id").is_some()
++        || args["mode"] == "background"
++    {
++        return background_action(args, capture);
++    }
++    #[cfg(not(target_os = "macos"))]
++    if args["action"] == "windows"
++        || args.get("window_id").is_some()
++        || args["mode"] == "background"
++    {
++        return Err(err("Background window control is supported on macOS only"));
++    }
+     let args = normalize_args(args)?;
+     let action = args["action"]
+         .as_str()
+@@ -97,14 +111,14 @@ pub fn action(args: &Value, capture: &Path) -> Result<Value> {
+         let mut c = std::process::Command::new("xdotool");
+         match action {
+             "move" | "click" | "drag" => {
+-                let x = number(args, "x")?;
+-                let y = number(args, "y")?;
++                let x = number(&args, "x")?;
++                let y = number(&args, "y")?;
+                 c.args(["mousemove", "--sync", &x.to_string(), &y.to_string()]);
+                 if action == "click" {
+                     c.args(["click", if args["button"] == "right" { "3" } else { "1" }]);
+                 } else if action == "drag" {
+-                    let tx = number(args, "to_x")?;
+-                    let ty = number(args, "to_y")?;
++                    let tx = number(&args, "to_x")?;
++                    let ty = number(&args, "to_y")?;
+                     c.args([
+                         "mousedown",
+                         "1",
+@@ -136,7 +150,18 @@ pub fn action(args: &Value, capture: &Path) -> Result<Value> {
+                 ]);
+             }
+             "scroll" => {
+-                let delta = number(args, "delta")?.clamp(-100, 100);
++                let delta = number(&args, "delta")?.clamp(-100, 100);
++                if args.get("x").is_some() {
++                    c.args([
++                        "mousemove",
++                        "--sync",
++                        &number(&args, "x")?.to_string(),
++                        &number(&args, "y")?.to_string(),
++                    ]);
++                }
++                if delta == 0 {
++                    return Ok(json!({"ok":true,"action":action,"meaningful":false}));
++                }
+                 c.args([
+                     "click",
+                     "--repeat",
+@@ -153,12 +178,161 @@ pub fn action(args: &Value, capture: &Path) -> Result<Value> {
+     Ok(json!({"ok":true,"action":action,"meaningful":true}))
+ }
+ 
++/// Validate routing and the entire stroke before starting a native helper.
++#[cfg(any(target_os = "macos", test))]
++fn normalize_background_args(args: &Value) -> Result<Value> {
++    if !args.is_object() {
++        return Err(err("Computer arguments must be an object"));
++    }
++    if args["action"] == "windows" {
++        return Ok(args.clone());
++    }
++    if args["mode"] == "desktop" {
++        return Err(err("A window target requires background mode"));
++    }
++    for key in ["window_id", "pid"] {
++        if args[key]
++            .as_u64()
++            .filter(|n| *n > 0 && *n <= i32::MAX as u64)
++            .is_none()
++        {
++            return Err(err(format!(
++                "Background input requires a positive integer {key}; call windows first"
++            )));
++        }
++    }
++    if args["action"] != "drag" || args.get("path").is_none() {
++        return normalize_args(args);
++    }
++    let path = args["path"]
++        .as_array()
++        .filter(|p| (2..=512).contains(&p.len()))
++        .ok_or_else(|| err("path needs 2 to 512 [x,y] points"))?;
++    for point in path {
++        let pair = point
++            .as_array()
++            .filter(|p| p.len() == 2)
++            .ok_or_else(|| err("path points must be [x,y]"))?;
++        if pair.iter().any(|n| {
++            n.as_f64()
++                .filter(|v| v.is_finite() && *v >= 0. && *v <= i32::MAX as f64)
++                .is_none()
++        }) {
++            return Err(err("Invalid path coordinate"));
++        }
++    }
++    let mut value = args.clone();
++    value["x"] = path[0][0].clone();
++    value["y"] = path[0][1].clone();
++    Ok(value)
++}
++
++/// Embedded at build time; deployed binaries do not need Swift/Xcode installed.
++/// A private, per-process directory prevents another user replacing the helper.
++#[cfg(target_os = "macos")]
++fn background_action(args: &Value, capture: &Path) -> Result<Value> {
++    use std::io::Write;
++    use std::os::unix::fs::{DirBuilderExt, OpenOptionsExt, PermissionsExt};
++    use std::process::{Command, Stdio};
++    static SERIAL: std::sync::Mutex<()> = std::sync::Mutex::new(());
++    static POINTER: std::sync::Mutex<Option<(Value, Value, Value)>> = std::sync::Mutex::new(None);
++    let _guard = SERIAL
++        .lock()
++        .map_err(|_| err("Computer control lock poisoned"))?;
++    let mut args = normalize_background_args(args)?;
++    if args["action"] == "screenshot" {
++        std::fs::create_dir_all(
++            capture
++                .parent()
++                .ok_or_else(|| err("Invalid screenshot path"))?,
++        )?;
++        args["capture_path"] = json!(capture);
++        if args["show_pointer"] != false
++            && let Some((window, pid, pointer)) = &*POINTER.lock().unwrap()
++        {
++            if *window == args["window_id"] && *pid == args["pid"] {
++                args["virtual_pointer"] = pointer.clone();
++            }
++        }
++    }
++    let dir = std::env::temp_dir().join(format!("lessagent-computer-{}", crate::id()));
++    std::fs::DirBuilder::new().mode(0o700).create(&dir)?;
++    struct Cleanup(std::path::PathBuf);
++    impl Drop for Cleanup {
++        fn drop(&mut self) {
++            let _ = std::fs::remove_dir_all(&self.0);
++        }
++    }
++    let _cleanup = Cleanup(dir.clone());
++    let executable = dir.join("lessagent-computer");
++    let mut file = std::fs::OpenOptions::new()
++        .write(true)
++        .create_new(true)
++        .mode(0o700)
++        .open(&executable)?;
++    file.write_all(include_bytes!(concat!(
++        env!("OUT_DIR"),
++        "/lessagent-computer"
++    )))?;
++    file.set_permissions(std::fs::Permissions::from_mode(0o500))?;
++    drop(file);
++    let mut child = Command::new(executable)
++        .stdin(Stdio::piped())
++        .stdout(Stdio::piped())
++        .stderr(Stdio::piped())
++        .spawn()?;
++    let input = serde_json::to_vec(&args)?;
++    let written = child
++        .stdin
++        .take()
++        .ok_or_else(|| err("Cannot open helper input"))?
++        .write_all(&input);
++    let output = child.wait_with_output()?;
++    written?;
++    let result: Value = serde_json::from_slice(&output.stdout).map_err(|_| {
++        err(format!(
++            "macOS computer helper failed: {}",
++            String::from_utf8_lossy(&output.stderr)
++        ))
++    })?;
++    if !output.status.success() {
++        return Err(err(result["error"]
++            .as_str()
++            .unwrap_or("macOS computer helper failed")));
++    }
++    if let Some(pointer) = result.get("virtual_pointer") {
++        *POINTER.lock().unwrap() = Some((
++            result["window_id"].clone(),
++            result["pid"].clone(),
++            pointer.clone(),
++        ));
++    }
++    Ok(result)
++}
++
+ /// Normalize the small amount of shorthand that models commonly use for a
+ /// drag, then validate its endpoints before any native event is posted. This
+ /// is deliberately done on the cloned argument value so a malformed request
+ /// can never move the pointer as a side effect of failing validation.
+ fn normalize_args(args: &Value) -> Result<Value> {
+     let mut args = args.clone();
++    if args["action"] == "scroll" {
++        if args.get("distance").is_some() {
++            if args.get("delta").is_some() {
++                return Err(err("Use distance or delta, not both"));
++            }
++            let distance = number(&args, "distance")?;
++            if !(-100..=100).contains(&distance) {
++                return Err(err("distance must be between -100 and 100"));
++            }
++            args["delta"] = json!(-distance);
++        }
++        number(&args, "delta")?;
++        if args.get("x").is_some() || args.get("y").is_some() {
++            number(&args, "x")?;
++            number(&args, "y")?;
++        }
++    }
+     if args["action"].as_str() != Some("drag") {
+         return Ok(args);
+     }
+@@ -285,6 +459,7 @@ mod mac {
+         fn CGEventCreateKeyboardEvent(source: *const c_void, key: u16, down: bool) -> Event;
+         fn CGEventKeyboardSetUnicodeString(event: Event, len: usize, text: *const u16);
+         fn CGEventSetFlags(event: Event, flags: u64);
++        fn CGEventSetLocation(event: Event, point: Point);
+         fn CGEventCreateScrollWheelEvent(
+             source: *const c_void,
+             units: u32,
+@@ -562,12 +737,26 @@ mod mac {
+                     }
+                 }
+                 "scroll" => {
+-                    post(CGEventCreateScrollWheelEvent(
+-                        std::ptr::null(),
+-                        1,
+-                        1,
+-                        -number(v, "delta")?.clamp(-100, 100),
+-                    ))?;
++                    let delta = number(v, "delta")?.clamp(-100, 100);
++                    let target = if v.get("x").is_some() {
++                        Some(coordinate(v, "x", "y")?)
++                    } else {
++                        None
++                    };
++                    if let Some(p) = target {
++                        post(CGEventCreateMouseEvent(std::ptr::null(), 5, p, 0))?;
++                        std::thread::sleep(std::time::Duration::from_millis(20));
++                    }
++                    if delta == 0 {
++                        return Ok(());
++                    }
++                    let event = CGEventCreateScrollWheelEvent(std::ptr::null(), 1, 1, -delta);
++                    if let Some(p) = target
++                        && !event.is_null()
++                    {
++                        CGEventSetLocation(event, p);
++                    }
++                    post(event)?;
+                 }
+                 _ => return Err(err("Unknown computer action")),
+             }
+@@ -581,6 +770,55 @@ mod tests {
+     use super::normalize_args;
+     use serde_json::json;
+ 
++    #[test]
++    fn scroll_distance_and_coordinates_validate_before_input() {
++        for distance in [-100, -10, 0, 10, 100] {
++            let v = normalize_args(&json!({"action":"scroll","distance":distance,"x":20,"y":30}))
++                .unwrap();
++            assert_eq!(v["delta"], -distance);
++        }
++        for v in [
++            json!({"action":"scroll","distance":101}),
++            json!({"action":"scroll","distance":10,"delta":10}),
++            json!({"action":"scroll","distance":10,"x":1}),
++            json!({"action":"scroll","distance":1.5}),
++            json!({"action":"scroll"}),
++        ] {
++            assert!(normalize_args(&v).is_err());
++        }
++    }
++
++    #[test]
++    fn background_requires_explicit_window_and_owner() {
++        for value in [
++            json!({"action":"click","mode":"background","x":1,"y":2}),
++            json!({"action":"click","window_id":5,"pid":false}),
++            json!({"action":"click","window_id":5,"pid":9,"mode":"desktop"}),
++        ] {
++            assert!(super::normalize_background_args(&value).is_err());
++        }
++        assert!(super::normalize_background_args(&json!({"action":"windows"})).is_ok());
++    }
++
++    #[test]
++    fn background_validates_whole_path_before_input() {
++        let base = json!({"action":"drag","window_id":5,"pid":9,"path":[[10,20],[30.5,40]]});
++        let valid = super::normalize_background_args(&base).unwrap();
++        assert_eq!(valid["x"], 10);
++        assert_eq!(valid["path"][1][0], 30.5);
++        for path in [
++            json!([]),
++            json!([[1, 2]]),
++            json!([[1, 2], [-1, 3]]),
++            json!([[1, 2], [3]]),
++            json!([[1, 2], ["3", 4]]),
++        ] {
++            let mut bad = base.clone();
++            bad["path"] = path;
++            assert!(super::normalize_background_args(&bad).is_err());
++        }
++    }
++
+     #[test]
+     fn drag_normalization_keeps_omitted_axis_at_start() {
+         let value = normalize_args(&json!({
+diff --git a/src/main.rs b/src/main.rs
+index e8c8147..161a424 100644
+--- a/src/main.rs
++++ b/src/main.rs
+@@ -80,8 +80,6 @@ async fn run() -> Result<()> {
+             "Use --passwd with start, restart, tui, serve, or no command",
+         ));
+     }
+-    let token = std::fs::read_to_string(dir.join("token"))
+-        .map_err(|_| err("Start lessagent serve first (use the same data directory)"))?;
+     let client = reqwest::Client::new();
+     let base = format!("http://127.0.0.1:{port}");
+     if command == "mcp" {
+@@ -93,7 +91,6 @@ async fn run() -> Result<()> {
+                     let id = request.get("id").cloned();
+                     match client
+                         .post(format!("{base}/mcp"))
+-                        .bearer_auth(&token)
+                         .json(&request)
+                         .send()
+                         .await
+@@ -119,6 +116,8 @@ async fn run() -> Result<()> {
+         }
+         return Ok(());
+     }
++    let token = std::fs::read_to_string(dir.join("token"))
++        .map_err(|_| err("Start lessagent serve first (use the same data directory)"))?;
+     let api = |action: &str, body: Value| {
+         client
+             .post(format!("{base}/api/action/{action}"))
+diff --git a/src/mcp.rs b/src/mcp.rs
+index 68103cd..e88c729 100644
+--- a/src/mcp.rs
++++ b/src/mcp.rs
+@@ -3,7 +3,12 @@ use serde_json::{Value, json};
+ use std::sync::Arc;
+ pub async fn handle(app: Arc<App>, request: Value) -> Option<Value> {
+     let id = request.get("id").cloned();
+-    if request["jsonrpc"] != "2.0" || !request["method"].is_string() {
++    if request["jsonrpc"] != "2.0"
++        || !request["method"].is_string()
++        || id
++            .as_ref()
++            .is_some_and(|id| !id.is_string() && !id.is_number())
++    {
+         return Some(
+             json!({"jsonrpc":"2.0","id":id,"error":{"code":-32600,"message":"Invalid Request"}}),
+         );
+@@ -11,10 +16,15 @@ pub async fn handle(app: Arc<App>, request: Value) -> Option<Value> {
+     let method = request["method"].as_str().unwrap();
+     id.as_ref()?;
+     let params = &request["params"];
++    if !params.is_null() && !params.is_object() {
++        return Some(
++            json!({"jsonrpc":"2.0","id":id,"error":{"code":-32602,"message":"Params must be an object"}}),
++        );
++    }
+     let result = match method {
+-        "initialize" => Ok(
+-            json!({"protocolVersion":"2025-03-26","capabilities":{"tools":{"listChanged":false}},"serverInfo":{"name":"lessagent","version":env!("CARGO_PKG_VERSION")},"instructions":"Local computer and coding agent. Open a folder with workspace_open, then pass its workspace id to tools. Commands execute on the host."}),
+-        ),
++        "initialize" => Ok(json!({"protocolVersion":params["protocolVersion"].as_str()
++                .filter(|v| matches!(*v, "2025-03-26" | "2025-06-18" | "2025-11-25"))
++                .unwrap_or("2025-11-25"),"capabilities":{"tools":{"listChanged":false}},"serverInfo":{"name":"lessagent","version":env!("CARGO_PKG_VERSION")},"instructions":"Local computer and coding agent. Open a folder with workspace_open, then pass its workspace id to tools. Commands execute on the host."})),
+         "ping" => Ok(json!({})),
+         "tools/list" => {
+             let mut defs = crate::tools::definitions();
+@@ -61,7 +71,11 @@ pub async fn handle(app: Arc<App>, request: Value) -> Option<Value> {
+ }
+ async fn call(app: Arc<App>, p: &Value) -> crate::Result<Value> {
+     let name = crate::tools::string(p, "name")?;
+-    let a = &p["arguments"];
++    let empty = json!({});
++    let a = p.get("arguments").unwrap_or(&empty);
++    if !a.is_object() {
++        return Err(crate::err("Tool arguments must be an object"));
++    }
+     match name {
+         "workspace_open" => Ok(serde_json::to_value(
+             app.open_workspace(std::path::Path::new(crate::tools::string(a, "path")?))?,
+diff --git a/src/server.rs b/src/server.rs
+index f5bffd1..4a04f5a 100644
+--- a/src/server.rs
++++ b/src/server.rs
+@@ -123,7 +123,12 @@ async fn auth(State(app): State<Arc<App>>, req: Request, next: Next) -> Response
+     let authorization = h.get(header::AUTHORIZATION).and_then(|v| v.to_str().ok());
+     let authenticated = authorization == Some(format!("Bearer {}", app.token).as_str());
+     let path = req.uri().path();
+-    let token_required = path == "/mcp" || path.starts_with("/api/admin/");
++    // MCP is deliberately public, including remote clients and installations
++    // with a browser password. Retain the origin checks above for browser calls.
++    if path == "/mcp" {
++        return next.run(req).await;
++    }
++    let token_required = path.starts_with("/api/admin/");
+     let password_required = app.password.lock().unwrap().is_some();
+     if path != "/api/login"
+         && !authenticated
+diff --git a/src/tools.rs b/src/tools.rs
+index de0908d..14523ce 100644
+--- a/src/tools.rs
++++ b/src/tools.rs
+@@ -8,21 +8,34 @@ use std::{
+ pub fn definitions() -> Vec<Value> {
+     vec![
+         json!({"name":"shell","description":"Run bash in a visible persistent PTY. Returns terminal_id and output; running commands continue in the backend. Use terminal_read to poll, terminal_write for input, terminal_stop to terminate.","parameters":{"type":"object","properties":{"command":{"type":"string"},"wait_ms":{"type":"integer"}},"required":["command"],"additionalProperties":false}}),
++        json!({"name":"bash","description":"Run Bash code in a workspace PTY. Returns terminal_id, output and exit status; use terminal_read/write/stop for running programs.","parameters":{"type":"object","properties":{"command":{"type":"string"},"wait_ms":{"type":"integer","minimum":0,"maximum":10000}},"required":["command"],"additionalProperties":false}}),
++        json!({"name":"python","description":"Run Python 3 code in the workspace using an unbuffered PTY. Each call starts a new interpreter. Returns terminal_id, output and exit status; use terminal_read/write/stop for running programs.","parameters":{"type":"object","properties":{"code":{"type":"string"},"wait_ms":{"type":"integer","minimum":0,"maximum":10000}},"required":["code"],"additionalProperties":false}}),
++        json!({"name":"write_image","description":"Receive a base64 image content block, save it in the workspace, and reply with the same image. Supports PNG, JPEG, GIF and WebP up to 20 MiB.","parameters":{"type":"object","properties":{"path":{"type":"string"},"image":{"type":"object","properties":{"type":{"type":"string","enum":["image"]},"mimeType":{"type":"string","enum":["image/png","image/jpeg","image/gif","image/webp"]},"data":{"type":"string"}},"required":["type","mimeType","data"],"additionalProperties":false}},"required":["path","image"],"additionalProperties":false}}),
+         json!({"name":"terminal_read","description":"Wait briefly for output or completion of a virtual terminal. If a server is running, verify it via HTTP instead of polling for exit. Stop unbounded searches and use scoped commands.","parameters":{"type":"object","properties":{"terminal_id":{"type":"string"},"wait_ms":{"type":"integer"}},"required":["terminal_id"],"additionalProperties":false}}),
+         json!({"name":"terminal_write","description":"Send text or control characters to a virtual terminal. Include a newline to submit a command.","parameters":{"type":"object","properties":{"terminal_id":{"type":"string"},"text":{"type":"string"}},"required":["terminal_id","text"],"additionalProperties":false}}),
+         json!({"name":"terminal_stop","description":"Stop a running terminal.","parameters":{"type":"object","properties":{"terminal_id":{"type":"string"}},"required":["terminal_id"],"additionalProperties":false}}),
+         json!({"name":"read_file","description":"Read a workspace UTF-8 file or image. Supports byte offset and limit for text.","parameters":{"type":"object","properties":{"path":{"type":"string"},"offset":{"type":"integer"},"limit":{"type":"integer"}},"required":["path"],"additionalProperties":false}}),
+         json!({"name":"write_file","description":"Create or replace a workspace text file. Read existing files before replacing them.","parameters":{"type":"object","properties":{"path":{"type":"string"},"text":{"type":"string"}},"required":["path","text"],"additionalProperties":false}}),
+         json!({"name":"list_files","description":"List project files respecting gitignore, with context token estimates.","parameters":{"type":"object","properties":{},"additionalProperties":false}}),
+-        json!({"name":"computer","description":"Control the desktop: screenshot, move, click, drag, type, key, or scroll. Take a screenshot first when coordinates matter. Screenshot results include the exact screenshot pixel width/height; pass those values as screen_width and screen_height when acting on that image. Lessagent maps screenshot pixels to macOS logical points on Retina displays. A drag normally uses integer x,y,to_x,to_y; a horizontal or vertical drag may omit the unchanged destination axis and Lessagent keeps it at the starting coordinate. from/to or start_x,start_y,end_x,end_y aliases are also accepted and normalized before input is posted. duration is optional seconds (duration_ms is accepted too). key accepts modifier+key (cmd+a on macOS). Positive scroll delta scrolls down. Requires computer control enabled in Settings.","parameters":{"type":"object","properties":{"action":{"type":"string","enum":["screenshot","move","click","drag","type","key","scroll"]},"x":{"type":"integer"},"y":{"type":"integer"},"to_x":{"type":"integer"},"to_y":{"type":"integer"},"from":{"type":"array","items":{"type":"integer"},"minItems":2,"maxItems":2},"to":{"type":"array","items":{"type":"integer"},"minItems":2,"maxItems":2},"start":{"type":"array","items":{"type":"integer"},"minItems":2,"maxItems":2},"end":{"type":"array","items":{"type":"integer"},"minItems":2,"maxItems":2},"start_x":{"type":"integer"},"start_y":{"type":"integer"},"end_x":{"type":"integer"},"end_y":{"type":"integer"},"target_x":{"type":"integer"},"target_y":{"type":"integer"},"duration":{"type":"number","minimum":0.05,"maximum":5},"duration_ms":{"type":"number","minimum":50,"maximum":5000},"screen_width":{"type":"integer"},"screen_height":{"type":"integer"},"button":{"type":"string","enum":["left","right"]},"text":{"type":"string"},"key":{"type":"string"},"delta":{"type":"integer"}},"required":["action"],"additionalProperties":false}}),
++        json!({"name":"computer","description":"Control the desktop: windows (macOS), screenshot, move, click, drag, type, key, or scroll. On macOS prefer background control: call windows, select window_id and pid, then pass both on every action. Targeted coordinates are relative to the whole window top-left; screenshot the same window first. Background events do not move the physical pointer; a light blue virtual pointer appears during input and turns dark blue while left-pressed or dragging. Every successful input action waits two seconds then automatically captures the target window (or desktop for desktop mode), saves it to output, and returns the image before the next model request. Take an explicit screenshot only for the initial view or to recover from screenshot_error; use automatic observations thereafter. The app must accept background events and the window must be on the current desktop, not minimized. key/type target the app keyboard responder; click the intended input first. scroll needs x,y in background mode. drag may use path:[[x,y],...] for a continuous stroke. Without window_id, legacy desktop actions use the shared system pointer. Take a screenshot first when coordinates matter. Screenshot results include the exact screenshot pixel width/height; pass those values as screen_width and screen_height when acting on that image. Lessagent maps screenshot pixels to macOS logical points on Retina displays. A drag normally uses integer x,y,to_x,to_y; a horizontal or vertical drag may omit the unchanged destination axis and Lessagent keeps it at the starting coordinate. from/to or start_x,start_y,end_x,end_y aliases are also accepted and normalized before input is posted. duration is optional seconds (duration_ms is accepted too). key accepts modifier+key (cmd+a on macOS). Scroll at x,y using distance: positive scrolls up (+10 = 10 lines up), negative scrolls down. distance is limited to -100..100. Legacy delta has the opposite sign; supply only one. Desktop scroll may omit both coordinates to use the current pointer. Requires computer control enabled in Settings.","parameters":{"type":"object","properties":{"action":{"type":"string","enum":["windows","screenshot","move","click","drag","type","key","scroll"]},"window_id":{"type":"integer","minimum":1},"pid":{"type":"integer","minimum":1},"mode":{"type":"string","enum":["background","desktop"]},"capture_path":{"type":"string","description":"Optional workspace-relative path for the screenshot PNG."},"show_pointer":{"type":"boolean"},"path":{"type":"array","minItems":2,"maxItems":512,"items":{"type":"array","items":{"type":"number"},"minItems":2,"maxItems":2}},"x":{"type":"integer"},"y":{"type":"integer"},"to_x":{"type":"integer"},"to_y":{"type":"integer"},"from":{"type":"array","items":{"type":"integer"},"minItems":2,"maxItems":2},"to":{"type":"array","items":{"type":"integer"},"minItems":2,"maxItems":2},"start":{"type":"array","items":{"type":"integer"},"minItems":2,"maxItems":2},"end":{"type":"array","items":{"type":"integer"},"minItems":2,"maxItems":2},"start_x":{"type":"integer"},"start_y":{"type":"integer"},"end_x":{"type":"integer"},"end_y":{"type":"integer"},"target_x":{"type":"integer"},"target_y":{"type":"integer"},"duration":{"type":"number","minimum":0.05,"maximum":5},"duration_ms":{"type":"number","minimum":50,"maximum":5000},"screen_width":{"type":"integer"},"screen_height":{"type":"integer"},"button":{"type":"string","enum":["left","right"]},"text":{"type":"string"},"key":{"type":"string"},"distance":{"type":"integer","minimum":-100,"maximum":100,"description":"Lines: positive up, negative down; exclusive with legacy delta."},"delta":{"type":"integer","description":"Legacy lines: positive down, negative up."}},"required":["action"],"additionalProperties":false}}),
+     ]
+ }
+ pub async fn execute(app: Arc<App>, workspace: &str, name: &str, args: &Value) -> Result<Value> {
+     let w = app.workspace(workspace)?;
+     app.log("tool", &format!("{name} · {}", w.name));
+     match name {
+-        "shell" => {
+-            let command = string(args, "command")?;
++        "shell" | "bash" | "python" => {
++            let source = string(args, if name == "python" { "code" } else { "command" })?;
++            if source.len() > 128 * 1024 {
++                return Err(err("Command too long"));
++            }
++            let python_command;
++            let command = if name == "python" {
++                python_command = format!("python3 -u -c '{}'", source.replace('\'', "'\"'\"'"));
++                &python_command
++            } else {
++                source
++            };
+             if command.len() > 128 * 1024 {
+                 return Err(err("Command too long"));
+             }
+@@ -89,6 +102,39 @@ pub async fn execute(app: Arc<App>, workspace: &str, name: &str, args: &Value) -
+                 json!({"text":crate::clip(&text[start..],limit),"offset":start,"total_bytes":text.len()}),
+             )
+         }
++        "write_image" => {
++            use base64::Engine;
++            let image = &args["image"];
++            if image["type"] != "image" {
++                return Err(err("Expected image content block"));
++            }
++            let mime = string(image, "mimeType")?;
++            let data = string(image, "data")?;
++            if data.len() > 28 * 1024 * 1024 {
++                return Err(err("Image exceeds 20 MiB limit"));
++            }
++            let bytes = base64::engine::general_purpose::STANDARD.decode(data)?;
++            if bytes.len() > 20 * 1024 * 1024 {
++                return Err(err("Image exceeds 20 MiB limit"));
++            }
++            let detected = match imagesize::image_type(&bytes)? {
++                imagesize::ImageType::Png => "image/png",
++                imagesize::ImageType::Jpeg => "image/jpeg",
++                imagesize::ImageType::Gif => "image/gif",
++                imagesize::ImageType::Webp => "image/webp",
++                _ => return Err(err("Unsupported image format")),
++            };
++            let p = context::resolve(&w.path, string(args, "path")?, true)?;
++            if mime != detected || context::mime(&p) != detected {
++                return Err(err("Image bytes, mimeType and file extension must agree"));
++            }
++            let size = imagesize::blob_size(&bytes)?;
++            crate::state::atomic_write(&p, &bytes)?;
++            Ok(
++                json!({"path":args["path"],"bytes":bytes.len(),"width":size.width,"height":size.height,
++                "image":{"mime":mime,"data":data}}),
++            )
++        }
+         "write_file" => {
+             let p = context::resolve(&w.path, string(args, "path")?, true)?;
+             let text = string(args, "text")?;
+@@ -111,17 +157,52 @@ pub async fn execute(app: Arc<App>, workspace: &str, name: &str, args: &Value) -
+                     "Enable computer control in Settings before using desktop tools",
+                 ));
+             }
+-            // The agent loop injects an artifact path for screenshots. Direct
+-            // CLI/MCP calls retain the legacy capture location as a fallback.
++            // Agent calls choose the iteration artifact directory; direct calls
++            // save automatic observations in the workspace output tree.
+             let capture_relative = args["capture_path"]
+                 .as_str()
+                 .map(str::to_owned)
+-                .unwrap_or_else(|| format!("agent/captures/{}.png", crate::id()));
++                .unwrap_or_else(|| format!("agent/output/computer/{}.png", crate::id()));
+             let p = context::resolve(&w.path, &capture_relative, true)?;
+             let args = args.clone();
+             let result = tokio::task::spawn_blocking(move || {
++                // Keep input and its observation together, including concurrent MCP calls.
++                static CONTROL: std::sync::Mutex<()> = std::sync::Mutex::new(());
++                let _guard = CONTROL
++                    .lock()
++                    .map_err(|_| err("Computer control lock poisoned"))?;
+                 let mut r = crate::computer::action(&args, &p)?;
+-                if args["action"] == "screenshot" {
++                let control = matches!(
++                    args["action"].as_str(),
++                    Some("move" | "click" | "drag" | "type" | "key" | "scroll")
++                );
++                if control {
++                    std::thread::sleep(std::time::Duration::from_secs(2));
++                    let mut observation = json!({"action":"screenshot"});
++                    for key in ["window_id", "pid", "mode", "show_pointer"] {
++                        if let Some(value) = args.get(key) {
++                            observation[key] = value.clone();
++                        }
++                    }
++                    match crate::computer::action(&observation, &p) {
++                        Ok(shot) => {
++                            if let Some(fields) = shot.as_object() {
++                                for (key, value) in fields {
++                                    r[key] = value.clone();
++                                }
++                            }
++                            r["automatic_screenshot"] = json!(true);
++                            r["observation_delay_ms"] = json!(2000);
++                        }
++                        Err(error) => {
++                            // Input already happened. Preserve that fact so callers do
++                            // not repeat an action merely because capture failed.
++                            r["screenshot_error"] = json!(error.to_string());
++                            r["automatic_screenshot"] = json!(false);
++                        }
++                    }
++                }
++                if args["action"] == "screenshot" || r["automatic_screenshot"] == true {
+                     use base64::Engine;
+                     r["image"] = json!({
+                         "mime":"image/png",
+diff --git a/tests/startup.py b/tests/startup.py
+index 1826644..e82df6d 100644
+--- a/tests/startup.py
++++ b/tests/startup.py
+@@ -110,7 +110,7 @@ with tempfile.TemporaryDirectory() as directory:
+         second_workspace=request('/api/action/workspace_open',{'path':str(folders)})
+         request('/api/action/ui', {'ui':{'selected':second_workspace['id']}})
+         public('/api/admin/shutdown', {}, expected=401)
+-        public('/mcp', {'jsonrpc':'2.0','id':1,'method':'tools/list'}, expected=401)
++        public('/mcp', {'jsonrpc':'2.0','id':1,'method':'tools/list'})
+         cli('start', '--passwd', 'test password')
+         public('/api/state', expected=401)
+         public('/api/login', {'password':'wrong'}, expected=401)
+@@ -133,7 +133,7 @@ with tempfile.TemporaryDirectory() as directory:
+         assert public('/api/login', {'password':'new password'})['token'] == token
+         assert 'stopped' in cli('stop')
+         pid = None
+-        print('PASS: startup/menu/TUI, local token-free access, password login/persistence/change, MCP auth, stop/restart')
++        print('PASS: startup/menu/TUI, local token-free access, password login/persistence/change, public MCP access, stop/restart')
+     finally:
+         if pid is not None:
+             os.kill(pid, signal.SIGINT)

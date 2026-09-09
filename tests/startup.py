@@ -110,7 +110,7 @@ with tempfile.TemporaryDirectory() as directory:
         second_workspace=request('/api/action/workspace_open',{'path':str(folders)})
         request('/api/action/ui', {'ui':{'selected':second_workspace['id']}})
         public('/api/admin/shutdown', {}, expected=401)
-        public('/mcp', {'jsonrpc':'2.0','id':1,'method':'tools/list'}, expected=401)
+        public('/mcp', {'jsonrpc':'2.0','id':1,'method':'tools/list'})
         cli('start', '--passwd', 'test password')
         public('/api/state', expected=401)
         public('/api/login', {'password':'wrong'}, expected=401)
@@ -133,7 +133,7 @@ with tempfile.TemporaryDirectory() as directory:
         assert public('/api/login', {'password':'new password'})['token'] == token
         assert 'stopped' in cli('stop')
         pid = None
-        print('PASS: startup/menu/TUI, local token-free access, password login/persistence/change, MCP auth, stop/restart')
+        print('PASS: startup/menu/TUI, local token-free access, password login/persistence/change, public MCP access, stop/restart')
     finally:
         if pid is not None:
             os.kill(pid, signal.SIGINT)

@@ -1,0 +1,62 @@
+{
+  "action": "browser_open",
+  "after": {
+    "cursor_x": 795.8359375,
+    "cursor_y": 403.7265625,
+    "front_window_id": 7371,
+    "frontmost_bundle": "com.google.Chrome",
+    "frontmost_pid": 1182,
+    "physical_key_down_count": 7145,
+    "physical_left_down_count": 3458,
+    "physical_right_down_count": 32
+  },
+  "automatic_screenshot": true,
+  "before": {
+    "cursor_x": 861.48828125,
+    "cursor_y": 329.74609375,
+    "front_window_id": 7371,
+    "frontmost_bundle": "com.google.Chrome",
+    "frontmost_pid": 1182,
+    "physical_key_down_count": 7145,
+    "physical_left_down_count": 3457,
+    "physical_right_down_count": 32
+  },
+  "coordinate_space": "window",
+  "delivery": "chrome-devtools",
+  "desktop": {
+    "cursor_x": 838.01171875,
+    "cursor_y": 283.17578125,
+    "front_window_id": 7371,
+    "frontmost_bundle": "com.google.Chrome",
+    "frontmost_pid": 1182,
+    "physical_key_down_count": 7145,
+    "physical_left_down_count": 3459,
+    "physical_right_down_count": 32
+  },
+  "input_events_posted": 0,
+  "isolated_profile": true,
+  "logical_height": 800,
+  "logical_width": 1050,
+  "mime": "image/png",
+  "mode": "background",
+  "observation_delay_ms": 2000,
+  "ok": true,
+  "path": "/Users/ecoo/project/agent/lessagent/output/control-fix/cat-before.png",
+  "pid": 59376,
+  "pointer": {
+    "fill_alpha": 0,
+    "hide_after_seconds": 30,
+    "idle_seconds": 30,
+    "left_pressed": false,
+    "panel_visible": false,
+    "panel_window_id": 0,
+    "phase": "hidden",
+    "transparent_after_seconds": 10,
+    "visible": false
+  },
+  "pointer_overlay": false,
+  "screen_height": 1600,
+  "screen_width": 2100,
+  "url": "http://127.0.0.1:4173/",
+  "window_id": 7393
+}

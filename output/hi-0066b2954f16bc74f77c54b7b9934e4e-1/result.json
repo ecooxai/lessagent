@@ -1,0 +1,7 @@
+{
+  "command": "printf 'No task-specific test supplied. Include <test>bash command</test> in the next response.\\n'; exit 1",
+  "directory": "output/hi-0066b2954f16bc74f77c54b7b9934e4e-1",
+  "exit_code": 1,
+  "interrupted": false,
+  "output": "No task-specific test supplied. Include <test>bash command</test> in the next response.\r\n"
+}

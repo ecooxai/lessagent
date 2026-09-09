@@ -1,0 +1,498 @@
+[
+  {
+    "subtype": 0,
+    "click": 0,
+    "flags": 0,
+    "number": 2,
+    "x": 450,
+    "result": {
+      "action": "move",
+      "after": {
+        "cursor_x": 885.79296875,
+        "cursor_y": 344.9921875,
+        "frontmost_bundle": "com.google.Chrome",
+        "frontmost_pid": 1182
+      },
+      "before": {
+        "cursor_x": 885.79296875,
+        "cursor_y": 344.9921875,
+        "frontmost_bundle": "com.google.Chrome",
+        "frontmost_pid": 1182
+      },
+      "coordinate_space": "window",
+      "delivery": "process-window",
+      "input_events_posted": 4,
+      "mode": "background",
+      "ok": true,
+      "pid": 36740,
+      "pointer_color": "#7DD4FF",
+      "pointer_pressed_color": "#2563EB",
+      "responder_lease": true,
+      "virtual_pointer": {
+        "x": 450,
+        "y": 330
+      },
+      "window_id": 5881
+    },
+    "events": [
+      {
+        "type": "focus",
+        "trusted": true,
+        "focused": true,
+        "value": ""
+      },
+      {
+        "type": "focus",
+        "trusted": true,
+        "focused": true,
+        "value": ""
+      },
+      {
+        "type": "blur",
+        "trusted": true,
+        "focused": false,
+        "value": ""
+      },
+      {
+        "type": "blur",
+        "trusted": true,
+        "focused": false,
+        "value": ""
+      }
+    ]
+  },
+  {
+    "subtype": 0,
+    "click": 1,
+    "flags": 0,
+    "number": 2,
+    "x": 475,
+    "result": {
+      "action": "move",
+      "after": {
+        "cursor_x": 859.62109375,
+        "cursor_y": 349.66796875,
+        "frontmost_bundle": "com.google.Chrome",
+        "frontmost_pid": 1182
+      },
+      "before": {
+        "cursor_x": 885.79296875,
+        "cursor_y": 344.9921875,
+        "frontmost_bundle": "com.google.Chrome",
+        "frontmost_pid": 1182
+      },
+      "coordinate_space": "window",
+      "delivery": "process-window",
+      "input_events_posted": 4,
+      "mode": "background",
+      "ok": true,
+      "pid": 36740,
+      "pointer_color": "#7DD4FF",
+      "pointer_pressed_color": "#2563EB",
+      "responder_lease": true,
+      "virtual_pointer": {
+        "x": 475,
+        "y": 330
+      },
+      "window_id": 5881
+    },
+    "events": [
+      {
+        "type": "focus",
+        "trusted": true,
+        "focused": true,
+        "value": ""
+      },
+      {
+        "type": "focus",
+        "trusted": true,
+        "focused": true,
+        "value": ""
+      },
+      {
+        "type": "blur",
+        "trusted": true,
+        "focused": false,
+        "value": ""
+      },
+      {
+        "type": "blur",
+        "trusted": true,
+        "focused": false,
+        "value": ""
+      }
+    ]
+  },
+  {
+    "subtype": 3,
+    "click": 1,
+    "flags": 0,
+    "number": 2,
+    "x": 500,
+    "result": {
+      "action": "move",
+      "after": {
+        "cursor_x": 481.796875,
+        "cursor_y": 475.890625,
+        "frontmost_bundle": "com.google.Chrome",
+        "frontmost_pid": 1182
+      },
+      "before": {
+        "cursor_x": 645.62109375,
+        "cursor_y": 520.78515625,
+        "frontmost_bundle": "com.google.Chrome",
+        "frontmost_pid": 1182
+      },
+      "coordinate_space": "window",
+      "delivery": "process-window",
+      "input_events_posted": 4,
+      "mode": "background",
+      "ok": true,
+      "pid": 36740,
+      "pointer_color": "#7DD4FF",
+      "pointer_pressed_color": "#2563EB",
+      "responder_lease": true,
+      "virtual_pointer": {
+        "x": 500,
+        "y": 330
+      },
+      "window_id": 5881
+    },
+    "events": [
+      {
+        "type": "focus",
+        "trusted": true,
+        "focused": true,
+        "value": ""
+      },
+      {
+        "type": "focus",
+        "trusted": true,
+        "focused": true,
+        "value": ""
+      },
+      {
+        "type": "blur",
+        "trusted": true,
+        "focused": false,
+        "value": ""
+      },
+      {
+        "type": "blur",
+        "trusted": true,
+        "focused": false,
+        "value": ""
+      }
+    ]
+  },
+  {
+    "subtype": 0,
+    "click": 0,
+    "flags": 256,
+    "number": 2,
+    "x": 525,
+    "result": {
+      "action": "move",
+      "after": {
+        "cursor_x": 455.30859375,
+        "cursor_y": 463.49609375,
+        "frontmost_bundle": "com.google.Chrome",
+        "frontmost_pid": 1182
+      },
+      "before": {
+        "cursor_x": 455.30859375,
+        "cursor_y": 463.49609375,
+        "frontmost_bundle": "com.google.Chrome",
+        "frontmost_pid": 1182
+      },
+      "coordinate_space": "window",
+      "delivery": "process-window",
+      "input_events_posted": 4,
+      "mode": "background",
+      "ok": true,
+      "pid": 36740,
+      "pointer_color": "#7DD4FF",
+      "pointer_pressed_color": "#2563EB",
+      "responder_lease": true,
+      "virtual_pointer": {
+        "x": 525,
+        "y": 330
+      },
+      "window_id": 5881
+    },
+    "events": [
+      {
+        "type": "focus",
+        "trusted": true,
+        "focused": true,
+        "value": ""
+      },
+      {
+        "type": "focus",
+        "trusted": true,
+        "focused": true,
+        "value": ""
+      },
+      {
+        "type": "blur",
+        "trusted": true,
+        "focused": false,
+        "value": ""
+      },
+      {
+        "type": "blur",
+        "trusted": true,
+        "focused": false,
+        "value": ""
+      }
+    ]
+  },
+  {
+    "subtype": 0,
+    "click": 1,
+    "flags": 256,
+    "number": 2,
+    "x": 550,
+    "result": {
+      "action": "move",
+      "after": {
+        "cursor_x": 677.77734375,
+        "cursor_y": 481.97265625,
+        "frontmost_bundle": "com.google.Chrome",
+        "frontmost_pid": 1182
+      },
+      "before": {
+        "cursor_x": 461.046875,
+        "cursor_y": 463.49609375,
+        "frontmost_bundle": "com.google.Chrome",
+        "frontmost_pid": 1182
+      },
+      "coordinate_space": "window",
+      "delivery": "process-window",
+      "input_events_posted": 4,
+      "mode": "background",
+      "ok": true,
+      "pid": 36740,
+      "pointer_color": "#7DD4FF",
+      "pointer_pressed_color": "#2563EB",
+      "responder_lease": true,
+      "virtual_pointer": {
+        "x": 550,
+        "y": 330
+      },
+      "window_id": 5881
+    },
+    "events": [
+      {
+        "type": "focus",
+        "trusted": true,
+        "focused": true,
+        "value": ""
+      },
+      {
+        "type": "focus",
+        "trusted": true,
+        "focused": true,
+        "value": ""
+      },
+      {
+        "type": "blur",
+        "trusted": true,
+        "focused": false,
+        "value": ""
+      },
+      {
+        "type": "blur",
+        "trusted": true,
+        "focused": false,
+        "value": ""
+      }
+    ]
+  },
+  {
+    "subtype": 3,
+    "click": 1,
+    "flags": 256,
+    "number": 2,
+    "x": 575,
+    "result": {
+      "action": "move",
+      "after": {
+        "cursor_x": 439.078125,
+        "cursor_y": 498.55859375,
+        "frontmost_bundle": "com.google.Chrome",
+        "frontmost_pid": 1182
+      },
+      "before": {
+        "cursor_x": 490.61328125,
+        "cursor_y": 506.28125,
+        "frontmost_bundle": "com.google.Chrome",
+        "frontmost_pid": 1182
+      },
+      "coordinate_space": "window",
+      "delivery": "process-window",
+      "input_events_posted": 4,
+      "mode": "background",
+      "ok": true,
+      "pid": 36740,
+      "pointer_color": "#7DD4FF",
+      "pointer_pressed_color": "#2563EB",
+      "responder_lease": true,
+      "virtual_pointer": {
+        "x": 575,
+        "y": 330
+      },
+      "window_id": 5881
+    },
+    "events": [
+      {
+        "type": "focus",
+        "trusted": true,
+        "focused": true,
+        "value": ""
+      },
+      {
+        "type": "focus",
+        "trusted": true,
+        "focused": true,
+        "value": ""
+      },
+      {
+        "type": "blur",
+        "trusted": true,
+        "focused": false,
+        "value": ""
+      },
+      {
+        "type": "blur",
+        "trusted": true,
+        "focused": false,
+        "value": ""
+      }
+    ]
+  },
+  {
+    "subtype": 0,
+    "click": 0,
+    "flags": 0,
+    "number": 3,
+    "x": 600,
+    "result": {
+      "action": "move",
+      "after": {
+        "cursor_x": 438.46875,
+        "cursor_y": 498.17578125,
+        "frontmost_bundle": "com.google.Chrome",
+        "frontmost_pid": 1182
+      },
+      "before": {
+        "cursor_x": 438.46875,
+        "cursor_y": 498.17578125,
+        "frontmost_bundle": "com.google.Chrome",
+        "frontmost_pid": 1182
+      },
+      "coordinate_space": "window",
+      "delivery": "process-window",
+      "input_events_posted": 4,
+      "mode": "background",
+      "ok": true,
+      "pid": 36740,
+      "pointer_color": "#7DD4FF",
+      "pointer_pressed_color": "#2563EB",
+      "responder_lease": true,
+      "virtual_pointer": {
+        "x": 600,
+        "y": 330
+      },
+      "window_id": 5881
+    },
+    "events": [
+      {
+        "type": "focus",
+        "trusted": true,
+        "focused": true,
+        "value": ""
+      },
+      {
+        "type": "focus",
+        "trusted": true,
+        "focused": true,
+        "value": ""
+      },
+      {
+        "type": "blur",
+        "trusted": true,
+        "focused": false,
+        "value": ""
+      },
+      {
+        "type": "blur",
+        "trusted": true,
+        "focused": false,
+        "value": ""
+      }
+    ]
+  },
+  {
+    "subtype": 0,
+    "click": 0,
+    "flags": 0,
+    "number": 0,
+    "x": 625,
+    "result": {
+      "action": "move",
+      "after": {
+        "cursor_x": 921.4296875,
+        "cursor_y": 413.01171875,
+        "frontmost_bundle": "com.google.Chrome",
+        "frontmost_pid": 1182
+      },
+      "before": {
+        "cursor_x": 642.796875,
+        "cursor_y": 496.44921875,
+        "frontmost_bundle": "com.google.Chrome",
+        "frontmost_pid": 1182
+      },
+      "coordinate_space": "window",
+      "delivery": "process-window",
+      "input_events_posted": 4,
+      "mode": "background",
+      "ok": true,
+      "pid": 36740,
+      "pointer_color": "#7DD4FF",
+      "pointer_pressed_color": "#2563EB",
+      "responder_lease": true,
+      "virtual_pointer": {
+        "x": 625,
+        "y": 330
+      },
+      "window_id": 5881
+    },
+    "events": [
+      {
+        "type": "focus",
+        "trusted": true,
+        "focused": true,
+        "value": ""
+      },
+      {
+        "type": "focus",
+        "trusted": true,
+        "focused": true,
+        "value": ""
+      },
+      {
+        "type": "blur",
+        "trusted": true,
+        "focused": false,
+        "value": ""
+      },
+      {
+        "type": "blur",
+        "trusted": true,
+        "focused": false,
+        "value": ""
+      }
+    ]
+  }
+]

@@ -5,7 +5,7 @@ use std::path::Path;
 pub fn capabilities() -> Value {
     #[cfg(target_os = "macos")]
     {
-        json!({"platform":"macos","backend":"CoreGraphics + screencapture","note":"Enable Accessibility for the backend terminal, and Screen Recording for screenshots."})
+        json!({"platform":"macos","backend":"CoreGraphics + AppKit + screencapture","background_control":true,"desktop_input":false,"pointer_idle_transparent_seconds":10,"pointer_idle_hide_seconds":30,"pointer_color":"#7DD4FF","note_background":"Use action windows, then window_id and pid for window-local input or screenshots. Process-directed events keep the system pointer independent; app support varies. Target must not be minimized.","note":"Enable Accessibility for the backend terminal, and Screen Recording for screenshots."})
     }
     #[cfg(not(target_os = "macos"))]
     {
@@ -39,7 +39,58 @@ pub fn screen_info() -> Option<Value> {
         None
     }
 }
+/// Browser sizes are logical window points, never Retina screenshot pixels.
+/// Unknown display geometry is not represented by a fabricated numeric limit.
+pub fn browser_size_schema() -> Value {
+    browser_size_schema_for(screen_info().as_ref())
+}
+fn browser_size_schema_for(display: Option<&Value>) -> Value {
+    let mut properties = json!({});
+    for (field, logical, minimum, default) in [
+        ("width", "logical_width", 640, 1000),
+        ("height", "logical_height", 480, 600),
+    ] {
+        let maximum = display.and_then(|v| v[logical].as_f64())
+            .filter(|v| v.is_finite() && *v > 0.0).map(|v| v.floor() as u64);
+        let mut schema = json!({"type":"integer", "minimum":minimum,
+            "description":"Browser window size in logical points. Maximum is the current primary display, rechecked at launch; the actual window is fitted to its visible work area. See instruction.md. Not screenshot pixels."});
+        if let Some(maximum) = maximum {
+            schema["maximum"] = json!(maximum);
+            if maximum >= minimum { schema["default"] = json!(default.min(maximum)); }
+        } else {
+            schema["default"] = json!(default);
+        }
+        properties[field] = schema;
+    }
+    properties
+}
+fn validate_browser_size(args: &Value, properties: &Value) -> Result<()> {
+    for field in ["width", "height"] {
+        if let Some(value) = args.get(field) {
+            let minimum = properties[field]["minimum"].as_u64().unwrap();
+            let maximum = properties[field]["maximum"].as_u64();
+            if value.as_u64().is_none_or(|n| n < minimum || maximum.is_some_and(|m| n > m)) {
+                return Err(err(format!("{field} must be an integer >= {minimum} and no larger than the current primary display in logical points (maximum: {}). Read instruction.md or refresh tools/list; no browser was opened.",
+                    maximum.map(|v| v.to_string()).unwrap_or_else(|| "unavailable until launch".into()))));
+            }
+        }
+    }
+    Ok(())
+}
+
 pub fn action(args: &Value, capture: &Path) -> Result<Value> {
+    validate_common_args(args)?;
+    #[cfg(target_os = "macos")]
+    if macos_background_route(args)? {
+        return background_action(args, capture);
+    }
+    #[cfg(not(target_os = "macos"))]
+    if args["action"] == "windows"
+        || args.get("window_id").is_some()
+        || args["mode"] == "background"
+    {
+        return Err(err("Background window control is supported on macOS only"));
+    }
     let args = normalize_args(args)?;
     let action = args["action"]
         .as_str()
@@ -70,22 +121,22 @@ pub fn action(args: &Value, capture: &Path) -> Result<Value> {
             ));
         }
         let mut result = json!({"path":capture,"mime":"image/png"});
-        if let Ok(size) = imagesize::size(capture) {
-            result["screen_width"] = json!(size.width);
-            result["screen_height"] = json!(size.height);
-        }
         if let Some(info) = screen_info() {
-            if let Some(object) = info.as_object() {
-                for (key, value) in object {
-                    result[key] = value.clone();
-                }
-            }
+            result["display"] = info;
         }
+        let size = imagesize::size(capture)?;
+        result["screen_width"] = json!(size.width);
+        result["screen_height"] = json!(size.height);
+        result["width"] = json!(size.width);
+        result["height"] = json!(size.height);
+        result["coordinate_space"] = json!("desktop");
         return Ok(result);
     }
     #[cfg(target_os = "macos")]
     {
-        mac::action(&args)?;
+        Err(err(
+            "macOS system-pointer input is disabled; no input was sent",
+        ))
     }
     #[cfg(not(target_os = "macos"))]
     {
@@ -97,14 +148,14 @@ pub fn action(args: &Value, capture: &Path) -> Result<Value> {
         let mut c = std::process::Command::new("xdotool");
         match action {
             "move" | "click" | "drag" => {
-                let x = number(args, "x")?;
-                let y = number(args, "y")?;
+                let x = number(&args, "x")?;
+                let y = number(&args, "y")?;
                 c.args(["mousemove", "--sync", &x.to_string(), &y.to_string()]);
                 if action == "click" {
                     c.args(["click", if args["button"] == "right" { "3" } else { "1" }]);
                 } else if action == "drag" {
-                    let tx = number(args, "to_x")?;
-                    let ty = number(args, "to_y")?;
+                    let tx = number(&args, "to_x")?;
+                    let ty = number(&args, "to_y")?;
                     c.args([
                         "mousedown",
                         "1",
@@ -136,7 +187,18 @@ pub fn action(args: &Value, capture: &Path) -> Result<Value> {
                 ]);
             }
             "scroll" => {
-                let delta = number(args, "delta")?.clamp(-100, 100);
+                let delta = number(&args, "delta")?.clamp(-100, 100);
+                if args.get("x").is_some() {
+                    c.args([
+                        "mousemove",
+                        "--sync",
+                        &number(&args, "x")?.to_string(),
+                        &number(&args, "y")?.to_string(),
+                    ]);
+                }
+                if delta == 0 {
+                    return Ok(json!({"ok":true,"action":action,"meaningful":false}));
+                }
                 c.args([
                     "click",
                     "--repeat",
@@ -150,7 +212,332 @@ pub fn action(args: &Value, capture: &Path) -> Result<Value> {
             return Err(err("xdotool failed"));
         }
     }
+    #[cfg(not(target_os = "macos"))]
     Ok(json!({"ok":true,"action":action,"meaningful":true}))
+}
+
+/// Shared by agent, HTTP and MCP: incomplete window requests must never
+/// become global mouse/keyboard input. macOS has no desktop input backend.
+#[cfg(any(target_os = "macos", test))]
+fn macos_background_route(args: &Value) -> Result<bool> {
+    validate_common_args(args)?;
+    if args["mode"] == "desktop" {
+        return Err(err(
+            "macOS permits background window control only; desktop/system-pointer input is disabled and never used as a fallback",
+        ));
+    }
+    if args["action"] == "windows" || args["action"] == "browser_open" {
+        return Ok(true);
+    }
+    if args.get("window_id").is_some() || args.get("pid").is_some() || args["mode"] == "background"
+    {
+        return Ok(true);
+    }
+    // A first untargeted screenshot is useful for desktop discovery.
+    if args["action"] == "screenshot" {
+        return Ok(false);
+    }
+    Err(err(
+        "No background window selected. Call windows, then pass window_id and pid. macOS system-pointer input is disabled; no input was sent",
+    ))
+}
+
+/// Schemas are hints, not enforcement. Validate before creating native events.
+fn validate_common_args(args: &Value) -> Result<()> {
+    if !args.is_object() {
+        return Err(err("Computer arguments must be an object"));
+    }
+    if !matches!(
+        args["action"].as_str(),
+        Some(
+            "windows"
+                | "screenshot"
+                | "browser_open"
+                | "move"
+                | "click"
+                | "drag"
+                | "type"
+                | "key"
+                | "scroll"
+        )
+    ) {
+        return Err(err("Unknown or missing computer action"));
+    }
+    if args["action"] == "browser_open" {
+        let url = args["url"]
+            .as_str()
+            .and_then(|s| reqwest::Url::parse(s).ok())
+            .ok_or_else(|| err("browser_open requires an HTTP(S) URL"))?;
+        if !matches!(url.scheme(), "http" | "https")
+            || url.host_str().is_none()
+            || !url.username().is_empty()
+            || url.password().is_some()
+        {
+            return Err(err(
+                "browser_open requires an HTTP(S) URL without embedded credentials",
+            ));
+        }
+        validate_browser_size(args, &browser_size_schema())?;
+        if [
+            "window_id",
+            "pid",
+            "x",
+            "y",
+            "path",
+            "button",
+            "text",
+            "key",
+        ]
+        .iter()
+        .any(|key| args.get(*key).is_some())
+        {
+            return Err(err(
+                "browser_open creates a new isolated window; do not supply an existing target or input fields",
+            ));
+        }
+    }
+    if let Some(mode) = args.get("mode")
+        && !matches!(mode.as_str(), Some("background" | "desktop"))
+    {
+        return Err(err("mode must be background or desktop"));
+    }
+    if args["mode"] == "desktop" && (args.get("window_id").is_some() || args.get("pid").is_some()) {
+        return Err(err(
+            "A window target requires background mode; remove window_id and pid for desktop control",
+        ));
+    }
+    if let Some(button) = args.get("button")
+        && !matches!(button.as_str(), Some("left" | "right"))
+    {
+        return Err(err("button must be left or right"));
+    }
+    if let Some(show) = args.get("show_pointer")
+        && !show.is_boolean()
+    {
+        return Err(err("show_pointer must be a boolean"));
+    }
+    if args.get("screen_width").is_some() || args.get("screen_height").is_some() {
+        for field in ["screen_width", "screen_height"] {
+            if number(args, field)? <= 0 {
+                return Err(err("Screenshot dimensions must both be positive integers"));
+            }
+        }
+    }
+    if args.get("duration").is_some() && args.get("duration_ms").is_some() {
+        return Err(err("Use duration or duration_ms, not both"));
+    }
+    for (field, low, high) in [("duration", 0.05, 5.0), ("duration_ms", 50.0, 5000.0)] {
+        if let Some(v) = args.get(field)
+            && v.as_f64()
+                .filter(|n| n.is_finite() && (low..=high).contains(n))
+                .is_none()
+        {
+            return Err(err(format!("{field} must be between {low} and {high}")));
+        }
+    }
+    if args.get("path").is_some() && args["action"] != "drag" {
+        return Err(err("path is only supported for drag"));
+    }
+    if matches!(args["action"].as_str(), Some("move" | "click")) {
+        number(args, "x")?;
+        number(args, "y")?;
+    }
+    if args["action"] == "type"
+        && args["text"]
+            .as_str()
+            .filter(|s| s.encode_utf16().count() <= 16384)
+            .is_none()
+    {
+        return Err(err("Missing text or text exceeds 16384 UTF-16 units"));
+    }
+    if args["action"] == "key" && args["key"].as_str().filter(|s| !s.is_empty()).is_none() {
+        return Err(err("Missing key"));
+    }
+    Ok(())
+}
+
+/// Validate routing and the entire stroke before starting a native helper.
+#[cfg(any(target_os = "macos", test))]
+fn normalize_background_args(args: &Value) -> Result<Value> {
+    validate_common_args(args)?;
+    if args["action"] == "windows" || args["action"] == "browser_open" {
+        return Ok(args.clone());
+    }
+    if args["mode"] == "desktop" {
+        return Err(err("A window target requires background mode"));
+    }
+    for key in ["window_id", "pid"] {
+        if args[key]
+            .as_u64()
+            .filter(|n| *n > 0 && *n <= i32::MAX as u64)
+            .is_none()
+        {
+            return Err(err(format!(
+                "Background input requires a positive integer {key}; call windows first"
+            )));
+        }
+    }
+    if args["action"] != "drag" || args.get("path").is_none() {
+        return normalize_args(args);
+    }
+    let path = args["path"]
+        .as_array()
+        .filter(|p| (2..=512).contains(&p.len()))
+        .ok_or_else(|| err("path needs 2 to 512 [x,y] points"))?;
+    for point in path {
+        let pair = point
+            .as_array()
+            .filter(|p| p.len() == 2)
+            .ok_or_else(|| err("path points must be [x,y]"))?;
+        if pair.iter().any(|n| {
+            n.as_f64()
+                .filter(|v| v.is_finite() && *v >= 0. && *v <= i32::MAX as f64)
+                .is_none()
+        }) {
+            return Err(err("Invalid path coordinate"));
+        }
+    }
+    let mut value = args.clone();
+    value["x"] = path[0][0].clone();
+    value["y"] = path[0][1].clone();
+    Ok(value)
+}
+
+/// One serialized, persistent AppKit helper owns the virtual pointer and its
+/// idle timers. A broken connection fails the current request: never replay
+/// input or substitute a desktop event. The next explicit call may start a new
+/// isolated helper. Closing the parent's pipe terminates the helper on shutdown.
+#[cfg(target_os = "macos")]
+fn background_action(args: &Value, capture: &Path) -> Result<Value> {
+    let mut args = normalize_background_args(args)?;
+    if args["action"] == "screenshot" {
+        std::fs::create_dir_all(
+            capture
+                .parent()
+                .ok_or_else(|| err("Invalid screenshot path"))?,
+        )?;
+        args["capture_path"] = json!(capture);
+    }
+    native_request(&args)
+}
+
+/// Resource discovery is read-only and does not require computer control enabled.
+#[cfg(target_os = "macos")]
+pub(crate) fn host_info() -> Result<Value> {
+    native_request(&json!({"action":"system_info"}))
+}
+#[cfg(target_os = "macos")]
+fn native_request(args: &Value) -> Result<Value> {
+    static HELPER: std::sync::Mutex<Option<NativeHelper>> = std::sync::Mutex::new(None);
+    let mut helper = HELPER
+        .lock()
+        .map_err(|_| err("Computer control lock poisoned"))?;
+    if let Some(h) = helper.as_mut()
+        && h.child.try_wait()?.is_some()
+    {
+        *helper = None;
+    }
+    if helper.is_none() {
+        *helper = Some(NativeHelper::start()?);
+    }
+    let result = match helper.as_mut().unwrap().exchange(args) {
+        Ok(result) => result,
+        Err(error) => {
+            *helper = None;
+            return Err(err(format!(
+                "macOS helper connection failed; input was not retried and no desktop fallback was used. Check the target before retrying: {error}"
+            )));
+        }
+    };
+    if let Some(error) = result.get("error") {
+        return Err(err(error
+            .as_str()
+            .unwrap_or("macOS background input failed")));
+    }
+    Ok(result)
+}
+
+#[cfg(target_os = "macos")]
+struct NativeHelper {
+    child: std::process::Child,
+    directory: std::path::PathBuf,
+    input: std::process::ChildStdin,
+    output: std::io::BufReader<std::process::ChildStdout>,
+}
+#[cfg(target_os = "macos")]
+impl NativeHelper {
+    fn start() -> Result<Self> {
+        use std::io::Write;
+        use std::os::unix::fs::{DirBuilderExt, OpenOptionsExt, PermissionsExt};
+        use std::process::{Command, Stdio};
+        let dir = std::env::temp_dir().join(format!("lessagent-computer-{}", crate::id()));
+        std::fs::DirBuilder::new().mode(0o700).create(&dir)?;
+        struct Cleanup(Option<std::path::PathBuf>);
+        impl Drop for Cleanup {
+            fn drop(&mut self) {
+                if let Some(path) = &self.0 {
+                    let _ = std::fs::remove_dir_all(path);
+                }
+            }
+        }
+        // macOS code-signing can kill a newly launched executable if unlinked
+        // before startup. Keep it for the helper's lifetime, in a private dir.
+        let mut cleanup = Cleanup(Some(dir.clone()));
+        let executable = dir.join("lessagent-computer");
+        let mut file = std::fs::OpenOptions::new()
+            .write(true)
+            .create_new(true)
+            .mode(0o700)
+            .open(&executable)?;
+        file.write_all(include_bytes!(concat!(
+            env!("OUT_DIR"),
+            "/lessagent-computer"
+        )))?;
+        file.set_permissions(std::fs::Permissions::from_mode(0o500))?;
+        drop(file);
+        let mut child = Command::new(executable)
+            .args(["--server", "--cleanup"])
+            .stdin(Stdio::piped())
+            .stdout(Stdio::piped())
+            .stderr(Stdio::inherit())
+            .spawn()?;
+        let input = child
+            .stdin
+            .take()
+            .ok_or_else(|| err("Cannot open helper input"))?;
+        let output = std::io::BufReader::new(
+            child
+                .stdout
+                .take()
+                .ok_or_else(|| err("Cannot open helper output"))?,
+        );
+        cleanup.0.take();
+        Ok(Self {
+            child,
+            directory: dir,
+            input,
+            output,
+        })
+    }
+    fn exchange(&mut self, args: &Value) -> Result<Value> {
+        use std::io::{BufRead, Write};
+        serde_json::to_writer(&mut self.input, args)?;
+        self.input.write_all(b"\n")?;
+        self.input.flush()?;
+        let mut line = String::new();
+        if self.output.read_line(&mut line)? == 0 {
+            return Err(err("Native helper exited without a response"));
+        }
+        Ok(serde_json::from_str(&line)?)
+    }
+}
+#[cfg(target_os = "macos")]
+impl Drop for NativeHelper {
+    fn drop(&mut self) {
+        let _ = self.child.kill();
+        let _ = self.child.wait();
+        let _ = std::fs::remove_dir_all(&self.directory);
+    }
 }
 
 /// Normalize the small amount of shorthand that models commonly use for a
@@ -158,7 +545,25 @@ pub fn action(args: &Value, capture: &Path) -> Result<Value> {
 /// is deliberately done on the cloned argument value so a malformed request
 /// can never move the pointer as a side effect of failing validation.
 fn normalize_args(args: &Value) -> Result<Value> {
+    validate_common_args(args)?;
     let mut args = args.clone();
+    if args["action"] == "scroll" {
+        if args.get("distance").is_some() {
+            if args.get("delta").is_some() {
+                return Err(err("Use distance or delta, not both"));
+            }
+            let distance = number(&args, "distance")?;
+            if !(-100..=100).contains(&distance) {
+                return Err(err("distance must be between -100 and 100"));
+            }
+            args["delta"] = json!(-distance);
+        }
+        number(&args, "delta")?;
+        if args.get("x").is_some() || args.get("y").is_some() {
+            number(&args, "x")?;
+            number(&args, "y")?;
+        }
+    }
     if args["action"].as_str() != Some("drag") {
         return Ok(args);
     }
@@ -219,9 +624,11 @@ fn normalize_args(args: &Value) -> Result<Value> {
     // Validate every coordinate before the platform backend is entered. The
     // backend's number() check also rejects strings, booleans, and fractions.
     for key in ["x", "y", "to_x", "to_y"] {
-        if object.get(key).and_then(Value::as_i64).is_none() {
-            return Err(err(format!("Missing integer {key} for drag")));
-        }
+        let n = object
+            .get(key)
+            .and_then(Value::as_i64)
+            .ok_or_else(|| err(format!("Missing integer {key} for drag")))?;
+        i32::try_from(n).map_err(|_| err("Drag coordinate out of range"))?;
     }
     Ok(args)
 }
@@ -243,7 +650,6 @@ fn number(v: &Value, key: &str) -> Result<i32> {
 }
 #[cfg(target_os = "macos")]
 mod mac {
-    use super::*;
     use std::ffi::c_void;
     #[repr(C)]
     #[derive(Clone, Copy)]
@@ -272,26 +678,8 @@ mod mac {
         pub origin_x: f64,
         pub origin_y: f64,
     }
-    type Event = *mut c_void;
     #[link(name = "ApplicationServices", kind = "framework")]
     unsafe extern "C" {
-        fn AXIsProcessTrusted() -> bool;
-        fn CGEventCreateMouseEvent(
-            source: *const c_void,
-            kind: u32,
-            point: Point,
-            button: u32,
-        ) -> Event;
-        fn CGEventCreateKeyboardEvent(source: *const c_void, key: u16, down: bool) -> Event;
-        fn CGEventKeyboardSetUnicodeString(event: Event, len: usize, text: *const u16);
-        fn CGEventSetFlags(event: Event, flags: u64);
-        fn CGEventCreateScrollWheelEvent(
-            source: *const c_void,
-            units: u32,
-            wheels: u32,
-            ...
-        ) -> Event;
-        fn CGEventPost(tap: u32, event: Event);
         fn CFRelease(object: *const c_void);
         fn CGMainDisplayID() -> u32;
         fn CGDisplayPixelsWide(display: u32) -> usize;
@@ -309,12 +697,16 @@ mod mac {
         // CGDisplayModeGetPixel* gives the backing-pixel dimensions used by
         // screencapture, which is the coordinate space attached to screenshots.
         let mode = unsafe { CGDisplayCopyDisplayMode(display) };
-        let mode_pixel_width = (!mode.is_null())
-            .then(|| unsafe { CGDisplayModeGetPixelWidth(mode) })
-            .unwrap_or(0);
-        let mode_pixel_height = (!mode.is_null())
-            .then(|| unsafe { CGDisplayModeGetPixelHeight(mode) })
-            .unwrap_or(0);
+        let mode_pixel_width = if !mode.is_null() {
+            unsafe { CGDisplayModeGetPixelWidth(mode) }
+        } else {
+            0
+        };
+        let mode_pixel_height = if !mode.is_null() {
+            unsafe { CGDisplayModeGetPixelHeight(mode) }
+        } else {
+            0
+        };
         if !mode.is_null() {
             unsafe { CFRelease(mode) };
         }
@@ -347,239 +739,229 @@ mod mac {
             origin_y: bounds.origin.y,
         })
     }
-    fn coordinate(v: &Value, x_key: &str, y_key: &str) -> Result<Point> {
-        let x = number(v, x_key)? as f64;
-        let y = number(v, y_key)? as f64;
-        // Light mode and native callers can provide the screenshot dimensions.
-        // Convert those pixels into Quartz points so Retina displays receive
-        // the same location the model saw in the image. Without dimensions,
-        // preserve the historical logical-point behavior for compatibility.
-        let Some(info) = screen_info() else {
-            return Ok(Point { x, y });
-        };
-        let source_width = v["screen_width"].as_f64().filter(|n| *n > 0.);
-        let source_height = v["screen_height"].as_f64().filter(|n| *n > 0.);
-        match (source_width, source_height) {
-            (Some(width), Some(height)) => Ok(Point {
-                x: info.origin_x + x * info.logical_width / width,
-                y: info.origin_y + y * info.logical_height / height,
-            }),
-            _ => Ok(Point { x, y }),
-        }
-    }
-    unsafe fn post(e: Event) -> Result<()> {
-        if e.is_null() {
-            return Err(err("Cannot create input event"));
-        }
-        unsafe {
-            CGEventPost(0, e);
-            CFRelease(e);
-        }
-        Ok(())
-    }
-    pub fn action(v: &Value) -> Result<()> {
-        unsafe {
-            if !AXIsProcessTrusted() {
-                return Err(err(
-                    "Enable Accessibility permission for the process running lessagent",
-                ));
-            }
-            match v["action"].as_str().unwrap_or("") {
-                "move" => {
-                    let p = coordinate(v, "x", "y")?;
-                    post(CGEventCreateMouseEvent(std::ptr::null(), 5, p, 0))?;
-                }
-                "click" => {
-                    let p = coordinate(v, "x", "y")?;
-                    let right = v["button"] == "right";
-                    let button = if right { 1 } else { 0 };
-                    post(CGEventCreateMouseEvent(std::ptr::null(), 5, p, 0))?;
-                    post(CGEventCreateMouseEvent(
-                        std::ptr::null(),
-                        if right { 3 } else { 1 },
-                        p,
-                        button,
-                    ))?;
-                    post(CGEventCreateMouseEvent(
-                        std::ptr::null(),
-                        if right { 4 } else { 2 },
-                        p,
-                        button,
-                    ))?;
-                }
-                "drag" => {
-                    // Resolve both points before posting the initial move. A
-                    // missing endpoint must be a clean error, never a pointer
-                    // move that looks like a partially executed drag.
-                    let start = coordinate(v, "x", "y")?;
-                    let end = coordinate(v, "to_x", "to_y")?;
-                    let right = v["button"] == "right";
-                    let button = if right { 1 } else { 0 };
-                    let down_kind = if right { 3 } else { 1 };
-                    let up_kind = if right { 4 } else { 2 };
-                    let dragged_kind = if right { 7 } else { 6 };
-                    let distance = (end.x - start.x).hypot(end.y - start.y);
-                    let steps = ((distance / 12.0).ceil() as usize).clamp(12, 120);
-                    let seconds = v["duration"]
-                        .as_f64()
-                        .filter(|value| value.is_finite() && *value > 0.)
-                        .or_else(|| {
-                            v["duration_ms"]
-                                .as_f64()
-                                .filter(|value| value.is_finite() && *value > 0.)
-                                .map(|value| value / 1000.)
-                        })
-                        .unwrap_or(0.15)
-                        .clamp(0.05, 5.0);
-                    let pause = std::time::Duration::from_secs_f64(seconds / steps as f64);
-
-                    post(CGEventCreateMouseEvent(std::ptr::null(), 5, start, 0))?;
-                    post(CGEventCreateMouseEvent(
-                        std::ptr::null(),
-                        down_kind,
-                        start,
-                        button,
-                    ))?;
-                    // Give the target application a frame to observe the
-                    // button-down before the first dragged event.
-                    std::thread::sleep(std::time::Duration::from_millis(8));
-                    for i in 1..=steps {
-                        let f = i as f64 / steps as f64;
-                        post(CGEventCreateMouseEvent(
-                            std::ptr::null(),
-                            dragged_kind,
-                            Point {
-                                x: start.x + (end.x - start.x) * f,
-                                y: start.y + (end.y - start.y) * f,
-                            },
-                            button,
-                        ))?;
-                        std::thread::sleep(pause);
-                    }
-                    post(CGEventCreateMouseEvent(
-                        std::ptr::null(),
-                        up_kind,
-                        end,
-                        button,
-                    ))?;
-                }
-                "type" => {
-                    let text: Vec<u16> = v["text"]
-                        .as_str()
-                        .ok_or_else(|| err("Missing text"))?
-                        .encode_utf16()
-                        .collect();
-                    for down in [true, false] {
-                        let e = CGEventCreateKeyboardEvent(std::ptr::null(), 0, down);
-                        if e.is_null() {
-                            return Err(err("Cannot create keyboard event"));
-                        }
-                        CGEventKeyboardSetUnicodeString(e, text.len(), text.as_ptr());
-                        post(e)?;
-                    }
-                }
-                "key" => {
-                    let key = v["key"]
-                        .as_str()
-                        .ok_or_else(|| err("Missing key"))?
-                        .to_ascii_lowercase();
-                    let mut parts: Vec<_> = key.split('+').collect();
-                    let key = parts.pop().unwrap_or("");
-                    let mut flags = 0;
-                    for m in parts {
-                        flags |= match m {
-                            "cmd" | "super" | "meta" => 1 << 20,
-                            "ctrl" | "control" => 1 << 18,
-                            "alt" | "option" => 1 << 19,
-                            "shift" => 1 << 17,
-                            _ => return Err(err("Unknown key modifier")),
-                        };
-                    }
-                    let code = match key {
-                        "a" => 0,
-                        "s" => 1,
-                        "d" => 2,
-                        "f" => 3,
-                        "h" => 4,
-                        "g" => 5,
-                        "z" => 6,
-                        "x" => 7,
-                        "c" => 8,
-                        "v" => 9,
-                        "b" => 11,
-                        "q" => 12,
-                        "w" => 13,
-                        "e" => 14,
-                        "r" => 15,
-                        "y" => 16,
-                        "t" => 17,
-                        "1" => 18,
-                        "2" => 19,
-                        "3" => 20,
-                        "4" => 21,
-                        "6" => 22,
-                        "5" => 23,
-                        "9" => 25,
-                        "7" => 26,
-                        "8" => 28,
-                        "0" => 29,
-                        "o" => 31,
-                        "u" => 32,
-                        "i" => 34,
-                        "p" => 35,
-                        "enter" | "return" => 36,
-                        "l" => 37,
-                        "j" => 38,
-                        "k" => 40,
-                        "n" => 45,
-                        "m" => 46,
-                        "tab" => 48,
-                        "space" => 49,
-                        "backspace" => 51,
-                        "escape" | "esc" => 53,
-                        "delete" => 117,
-                        "home" => 115,
-                        "end" => 119,
-                        "pageup" => 116,
-                        "pagedown" => 121,
-                        "left" => 123,
-                        "right" => 124,
-                        "down" => 125,
-                        "up" => 126,
-                        _ => return Err(err("Unsupported key; use type for text")),
-                    };
-                    for down in [true, false] {
-                        let e = CGEventCreateKeyboardEvent(std::ptr::null(), code, down);
-                        if e.is_null() {
-                            return Err(err("Cannot create keyboard event"));
-                        }
-                        // Modifier flags describe the key state while the
-                        // key is pressed. Clear them on key-up so a
-                        // cmd/ctrl/option shortcut cannot leak into the next
-                        // Unicode typing event.
-                        CGEventSetFlags(e, if down { flags } else { 0 });
-                        post(e)?;
-                    }
-                }
-                "scroll" => {
-                    post(CGEventCreateScrollWheelEvent(
-                        std::ptr::null(),
-                        1,
-                        1,
-                        -number(v, "delta")?.clamp(-100, 100),
-                    ))?;
-                }
-                _ => return Err(err("Unknown computer action")),
-            }
-        }
-        Ok(())
-    }
 }
 
 #[cfg(test)]
 mod tests {
     use super::normalize_args;
     use serde_json::json;
+
+    #[test]
+    fn browser_open_validates_before_launching_any_process() {
+        for value in [
+            json!({"action":"browser_open"}),
+            json!({"action":"browser_open","url":"file:///etc/passwd"}),
+            json!({"action":"browser_open","url":"javascript:alert(1)"}),
+            json!({"action":"browser_open","url":"https://user:secret@example.com"}),
+            json!({"action":"browser_open","url":"http://127.0.0.1:4173","width":true}),
+            json!({"action":"browser_open","url":"https://example.com","height":600.5}),
+            json!({"action":"browser_open","url":"https://example.com","width":0}),
+            json!({"action":"browser_open","url":"https://example.com","window_id":4,"pid":5}),
+        ] {
+            assert!(super::validate_common_args(&value).is_err(), "{value}");
+        }
+        let value = json!({"action":"browser_open","url":"http://127.0.0.1:4173/","width":1000,"height":750});
+        assert!(super::validate_common_args(&value).is_ok());
+        assert!(super::macos_background_route(&value).unwrap());
+        assert!(super::normalize_background_args(&value).is_ok());
+    }
+
+    #[test]
+    fn background_routing_never_falls_back_to_system_pointer() {
+        use super::macos_background_route as route;
+        for value in [
+            json!({"action":"click","x":10,"y":20}),
+            json!({"action":"move","x":10,"y":20}),
+            json!({"action":"drag","x":10,"y":20,"to_x":30,"to_y":40}),
+            json!({"action":"key","key":"a"}),
+            json!({"action":"type","text":"hello"}),
+            json!({"action":"scroll","distance":-1}),
+            json!({"action":"click","mode":"bckground","x":10,"y":20}),
+            json!({"action":"click","mode":"desktop","pid":9,"x":10,"y":20}),
+        ] {
+            assert!(route(&value).is_err(), "{value}");
+        }
+        assert!(!route(&json!({"action":"screenshot"})).unwrap());
+        assert!(route(&json!({"action":"windows"})).unwrap());
+        assert!(route(&json!({"action":"click","mode":"desktop","x":10,"y":20})).is_err());
+        // A PID-only request must be routed to validation, never desktop.
+        assert!(route(&json!({"action":"click","pid":9,"x":10,"y":20})).unwrap());
+        assert!(
+            super::normalize_background_args(&json!({"action":"click","pid":9,"x":10,"y":20}))
+                .is_err()
+        );
+    }
+
+    #[test]
+    fn macos_rejects_explicit_desktop_for_every_action() {
+        for action in [
+            "windows",
+            "screenshot",
+            "move",
+            "click",
+            "drag",
+            "scroll",
+            "key",
+            "type",
+        ] {
+            let value = json!({"action":action,"mode":"desktop","x":10,"y":20,"to_x":30,"to_y":40,"distance":1,"key":"a","text":"test"});
+            assert!(super::macos_background_route(&value).is_err(), "{value}");
+        }
+    }
+
+    #[test]
+    fn macos_native_backend_contains_no_global_input_api() {
+        let source = include_str!("../native/computer.swift");
+        for forbidden in [
+            "CGEventPost(",
+            ".post(tap:",
+            "CGWarpMouseCursorPosition",
+            "CGAssociateMouseAndMouseCursorPosition",
+            "AXUIElementSetAttributeValue",
+        ] {
+            assert!(
+                !source.contains(forbidden),
+                "Forbidden global input API: {forbidden}"
+            );
+        }
+        assert!(source.contains(".postToPid(pid)"));
+    }
+
+    #[test]
+    fn common_validation_rejects_malformed_fields_before_native_events() {
+        let base = json!({"action":"click","window_id":5,"pid":9,"x":20,"y":30});
+        for patch in [
+            json!({"button":"middle"}),
+            json!({"button":false}),
+            json!({"mode":"auto"}),
+            json!({"show_pointer":"false"}),
+            json!({"screen_width":1000}),
+            json!({"screen_height":750}),
+            json!({"screen_width":0,"screen_height":750}),
+            json!({"screen_width":1000.5,"screen_height":750}),
+            json!({"duration":-1}),
+            json!({"duration":true}),
+            json!({"duration":6}),
+            json!({"duration_ms":10}),
+            json!({"duration":1,"duration_ms":1000}),
+            json!({"x":2147483648_i64}),
+            json!({"x":"20"}),
+            json!({"path":[[20,30],[40,50]]}),
+        ] {
+            let mut value = base.clone();
+            value
+                .as_object_mut()
+                .unwrap()
+                .extend(patch.as_object().unwrap().clone());
+            assert!(super::normalize_background_args(&value).is_err(), "{value}");
+        }
+        for value in [
+            json!(null),
+            json!([]),
+            json!({}),
+            json!({"action":"unknown"}),
+            json!({"action":"key","key":""}),
+            json!({"action":"type","text":9}),
+        ] {
+            assert!(super::validate_common_args(&value).is_err(), "{value}");
+        }
+    }
+
+    #[test]
+    fn path_drag_durations_and_dimensions_do_not_bypass_validation() {
+        let base = json!({"action":"drag","window_id":5,"pid":9,"path":[[20,30],[40,50]]});
+        for patch in [
+            json!({"duration":-1}),
+            json!({"duration_ms":true}),
+            json!({"duration":0.1,"duration_ms":100}),
+            json!({"screen_width":0,"screen_height":750}),
+        ] {
+            let mut value = base.clone();
+            value
+                .as_object_mut()
+                .unwrap()
+                .extend(patch.as_object().unwrap().clone());
+            assert!(super::normalize_background_args(&value).is_err(), "{value}");
+        }
+        let mut value = base;
+        value["screen_width"] = json!(2000);
+        value["screen_height"] = json!(1500);
+        value["duration_ms"] = json!(50);
+        assert!(super::normalize_background_args(&value).is_ok());
+    }
+
+    #[test]
+    fn drag_aliases_validate_full_integer_range() {
+        for value in [
+            json!({"action":"drag","start":[10,20],"end":[30,40]}),
+            json!({"action":"drag","start_x":10,"start_y":20,"end_x":30,"end_y":40}),
+            json!({"action":"drag","start_x":10,"start_y":20,"target_x":30,"target_y":40}),
+        ] {
+            let v = normalize_args(&value).unwrap();
+            assert_eq!(
+                (
+                    v["x"].as_i64(),
+                    v["y"].as_i64(),
+                    v["to_x"].as_i64(),
+                    v["to_y"].as_i64()
+                ),
+                (Some(10), Some(20), Some(30), Some(40))
+            );
+        }
+        assert!(
+            normalize_args(&json!({"action":"drag","x":10,"y":20,"to_x":2147483648_i64,"to_y":40}))
+                .is_err()
+        );
+    }
+
+    #[test]
+    fn scroll_distance_and_coordinates_validate_before_input() {
+        for distance in [-100, -10, 0, 10, 100] {
+            let v = normalize_args(&json!({"action":"scroll","distance":distance,"x":20,"y":30}))
+                .unwrap();
+            assert_eq!(v["delta"], -distance);
+        }
+        for v in [
+            json!({"action":"scroll","distance":101}),
+            json!({"action":"scroll","distance":10,"delta":10}),
+            json!({"action":"scroll","distance":10,"x":1}),
+            json!({"action":"scroll","distance":1.5}),
+            json!({"action":"scroll"}),
+        ] {
+            assert!(normalize_args(&v).is_err());
+        }
+    }
+
+    #[test]
+    fn background_requires_explicit_window_and_owner() {
+        for value in [
+            json!({"action":"click","mode":"background","x":1,"y":2}),
+            json!({"action":"click","window_id":5,"pid":false}),
+            json!({"action":"click","window_id":5,"pid":9,"mode":"desktop"}),
+        ] {
+            assert!(super::normalize_background_args(&value).is_err());
+        }
+        assert!(super::normalize_background_args(&json!({"action":"windows"})).is_ok());
+    }
+
+    #[test]
+    fn background_validates_whole_path_before_input() {
+        let base = json!({"action":"drag","window_id":5,"pid":9,"path":[[10,20],[30.5,40]]});
+        let valid = super::normalize_background_args(&base).unwrap();
+        assert_eq!(valid["x"], 10);
+        assert_eq!(valid["path"][1][0], 30.5);
+        for path in [
+            json!([]),
+            json!([[1, 2]]),
+            json!([[1, 2], [-1, 3]]),
+            json!([[1, 2], [3]]),
+            json!([[1, 2], ["3", 4]]),
+        ] {
+            let mut bad = base.clone();
+            bad["path"] = path;
+            assert!(super::normalize_background_args(&bad).is_err());
+        }
+    }
 
     #[test]
     fn drag_normalization_keeps_omitted_axis_at_start() {

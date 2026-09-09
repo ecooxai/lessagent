@@ -1,0 +1,103 @@
+PASS input left click mcp-http
+PASS input left click mcp-stdio
+PASS input left click api
+PASS check left click exactly once / normal API + both MCP transports
+PASS input right click mcp-http
+PASS check right click / correct button mask / release
+PASS input accuracy grid 1 / logical mcp-http
+PASS input accuracy grid 2 / logical mcp-stdio
+PASS input accuracy grid 3 / logical api
+PASS input accuracy grid 4 / Retina pixels mcp-http
+PASS input accuracy grid 5 / Retina pixels mcp-stdio
+PASS input accuracy grid 6 / Retina pixels api
+PASS input accuracy grid 7 / resized screenshot mcp-http
+PASS input accuracy grid 8 / resized screenshot mcp-stdio
+PASS input accuracy grid 9 / resized screenshot api
+PASS check 9-position grid / corners, edges, center / logical, Retina and resized screenshot accuracy <=1.01 CSS px
+PASS input slider drag Retina pixels mcp-http
+PASS check native slider drag / Retina coordinate conversion
+PASS input horizontal shorthand mcp-http
+PASS input vertical shorthand mcp-http
+PASS input continuous star path mcp-http
+PASS input fast drag 50ms mcp-http
+PASS input repeated drag 0 mcp-http
+PASS input repeated drag 1 mcp-http
+PASS input repeated drag 2 mcp-http
+PASS check horizontal / vertical / curved / fast / repeated continuous drags
+PASS input right drag mcp-http
+PASS input move after drag mcp-http
+PASS check right drag / no stuck button after release
+PASS input scroll down mcp-http
+PASS input scroll up mcp-http
+PASS input scroll zero mcp-http
+PASS input legacy scroll mcp-http
+PASS check scroll directions / real scroll position / zero / legacy delta
+PASS input focus input mcp-http
+PASS input Unicode type mcp-http
+PASS input shift+left mcp-http
+PASS input replace selection mcp-http
+PASS input cmd+a mcp-http
+PASS input replace all mcp-http
+PASS input backspace mcp-http
+PASS input tab mcp-http
+PASS check Unicode / emoji / text selection / modifier keys / backspace / Tab
+PASS input move mcp-http
+PASS check move / hover with no click
+PASS check 23 invalid requests / no partial input / no implicit desktop fallback
+PASS input isolated scroll scrollbox2 mcp-stdio
+PASS input isolated scroll scrollbox api
+PASS check scroll location <=1.01 CSS px / adjacent panel isolation
+PASS input idle lifecycle start mcp-http
+/Users/ecoo/project/agent/lessagent/tests/computer_background.py:341: DeprecationWarning: Image.Image.getdata is deprecated and will be removed in Pillow 14 (2027-10-15). Use get_flattened_data instead.
+  return sum(1 for r,g,b,a in Image.open(path).convert('RGBA').getdata() if a>100 and r<180 and g>130 and b>190 and b-r>40)
+PASS idle 9.0 active
+/Users/ecoo/project/agent/lessagent/tests/computer_background.py:354: DeprecationWarning: Image.Image.getdata is deprecated and will be removed in Pillow 14 (2027-10-15). Use get_flattened_data instead.
+  assert any(a>0 for *_,a in Image.open(transparent_path).convert('RGBA').getdata()),'Pointer was removed instead of made transparent'
+PASS idle 10.4 transparent
+PASS idle 29.0 transparent
+PASS idle 30.4 hidden
+PASS input reactivate after idle mcp-http
+PASS input explicit hidden pointer mcp-http
+PASS input restore visible pointer mcp-http
+PASS check live overlay 10s transparent / 30s hidden / observations do not reset idle / reactivation / explicit hide
+PASS input managed target survives helper restart mcp-http
+PASS check helper recovery / persisted browser target / no duplicate input replay
+{
+  "passed": true,
+  "binary": "/Users/ecoo/project/agent/lessagent/output/final-control-verification/lessagent-verified-release",
+  "input_delivery": "chrome-devtools Input + native window observation; no DOM event injection",
+  "browser": "Google Chrome",
+  "checks": [
+    "left click exactly once / normal API + both MCP transports",
+    "right click / correct button mask / release",
+    "9-position grid / corners, edges, center / logical, Retina and resized screenshot accuracy <=1.01 CSS px",
+    "native slider drag / Retina coordinate conversion",
+    "horizontal / vertical / curved / fast / repeated continuous drags",
+    "right drag / no stuck button after release",
+    "scroll directions / real scroll position / zero / legacy delta",
+    "Unicode / emoji / text selection / modifier keys / backspace / Tab",
+    "move / hover with no click",
+    "23 invalid requests / no partial input / no implicit desktop fallback",
+    "scroll location <=1.01 CSS px / adjacent panel isolation",
+    "live overlay 10s transparent / 30s hidden / observations do not reset idle / reactivation / explicit hide",
+    "helper recovery / persisted browser target / no duplicate input replay"
+  ],
+  "actions": 43,
+  "stationary_cursor_actions": 22,
+  "foreground_target_seen": false,
+  "foreground_preserved_after_observation": true,
+  "virtual_document_focus": true,
+  "all_input_events_trusted": true,
+  "accuracy_samples": 555,
+  "max_position_error_css_px": 0.0,
+  "max_drag_cross_track_error_css_px": 3.0414004748389392e-05,
+  "transports": [
+    "api",
+    "mcp-http",
+    "mcp-stdio"
+  ],
+  "screenshots": [
+    "before.png",
+    "star.png"
+  ]
+}

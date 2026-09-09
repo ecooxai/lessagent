@@ -1,0 +1,123 @@
+{
+  "passed": false,
+  "started": 1788892773.319459,
+  "source_before": {
+    "Cargo.toml": "6799d72b1e8171ddc015832c83ecd7c32062d4a888c13bf78f5c6fac7f976aa7",
+    "Cargo.lock": "450757ec968c72231e0a10b9b74f1c6a05bd0fa43933469fc364f0c744bb3639",
+    "build.rs": "ae955a85aa01c28b7a327e27e414dcdcefc48b22ee9fcf0fdf6697b311a08b0e",
+    "src/agent.rs": "c8919f40278aa7a4eb775c260ecdd9a1ddf0b19d9fdc8fd390a94b8cb305e6da",
+    "src/computer.rs": "a1cef863a226016dd6643dae5147512588b83d904c3aba69bddb09e78f2236b0",
+    "src/context.rs": "e2fd8c104cc6c93264586b86b142409a5b4f4418277817577201789517a104a2",
+    "src/git.rs": "9510073480ee725301d25210824ae820f5f5c7872917e3ace013c308a851b607",
+    "src/lib.rs": "b445b1f17fd60247422c7ffd2260a3ae74a994cdf1cdd09dc91c2baa2e988e74",
+    "src/main.rs": "90cafe797716183eb3656d5a2923aa81b63233fb4651cb53eedf5b2d5575a924",
+    "src/mcp.rs": "5b37cbdb2e63a134d3af1762d9657028090afc467efdf69784639fd1dccac7f8",
+    "src/provider.rs": "efdc6cfe1bfed689cdc550183f9903593dfd98db269e1c76cc3877e44e0b61ed",
+    "src/server.rs": "196f2c0c235da413901cf9cebbc8b2d22986e815b3b501f1868f0750c7316a53",
+    "src/state.rs": "c82dd2294b13ec60dae486f45cea9aa29712edee7c79ed237a68adb6ada62a2a",
+    "src/terminal.rs": "c05a66d81cf9cb89c7f961eecdaed08d3057132581a3c55c1d4240e689146f38",
+    "src/tools.rs": "10436d8d74a969ff4d7737f59ad11b993cedafe029ec9339f0d661e448d01cef",
+    "src/tui.rs": "1a4091c4926ccd5a0a20aedeb00e1a869168fd790d3bf2362ec6b6684fd5b624",
+    "native/browser.swift": "27d5fec253521ef9e8fac2da63f1d4db7bc672481e0dcfd25376f106c1b62e75",
+    "native/computer.swift": "758782154cfd5ab7bfc75235ab50eeece5252e3717bd59e3c351cbb4aa3bcc2d",
+    "web/app.js": "aecf53f657273068130c84b71af1843b105a3595d1b0b3f064bacdce7dc3ea8a",
+    "web/index.html": "69bf03a614a645dbb60ee3fc8a499ec105caa4c2ed3cc2400042cc08dc600051",
+    "web/style.css": "7907e2ea8f5020818d17ce884ba62bc0c90a60c8ed34926899c2bebe60293c66"
+  },
+  "checks": [
+    {
+      "name": "fmt",
+      "exit_code": 0,
+      "seconds": 0.18
+    },
+    {
+      "name": "unit",
+      "exit_code": 0,
+      "seconds": 9.6
+    },
+    {
+      "name": "clippy",
+      "exit_code": 0,
+      "seconds": 8.72
+    },
+    {
+      "name": "ui-agent_sessions",
+      "exit_code": 0,
+      "seconds": 1.06
+    },
+    {
+      "name": "ui-agent_tab_lifecycle",
+      "exit_code": 0,
+      "seconds": 0.5
+    },
+    {
+      "name": "ui-event_archive",
+      "exit_code": 0,
+      "seconds": 0.39
+    },
+    {
+      "name": "ui-file_preview",
+      "exit_code": 0,
+      "seconds": 0.93
+    },
+    {
+      "name": "ui-tab_polling",
+      "exit_code": 0,
+      "seconds": 0.51
+    },
+    {
+      "name": "ui-tabs",
+      "exit_code": 0,
+      "seconds": 0.34
+    },
+    {
+      "name": "ui-terminal_performance",
+      "exit_code": 0,
+      "seconds": 1.71
+    },
+    {
+      "name": "ui-thinking",
+      "exit_code": 0,
+      "seconds": 6.51
+    },
+    {
+      "name": "ui-workspace_picker",
+      "exit_code": 0,
+      "seconds": 0.62
+    },
+    {
+      "name": "release-build",
+      "exit_code": 0,
+      "seconds": 46.03
+    },
+    {
+      "name": "smoke",
+      "exit_code": 0,
+      "seconds": 6.61
+    },
+    {
+      "name": "startup",
+      "exit_code": 0,
+      "seconds": 2.58
+    },
+    {
+      "name": "legacy-startup",
+      "exit_code": 0,
+      "seconds": 1.16
+    },
+    {
+      "name": "mcp-sdk",
+      "exit_code": 0,
+      "seconds": 4.59
+    },
+    {
+      "name": "background-controls",
+      "exit_code": 1,
+      "seconds": 31.13
+    }
+  ],
+  "binary_sha256": "00ab244eeef336cdb017ccd5c7bf16efe1ff7a7f8e61b2b626356b630b173f71",
+  "error": "background-controls failed; see /Users/ecoo/project/agent/lessagent/output/control-fix/release-verification/background-controls.log",
+  "traceback": "Traceback (most recent call last):\n  File \"/Users/ecoo/project/agent/lessagent/output/control-fix/verify_release.py\", line 33, in <module>\n    check('background-controls',['uv','run','--with','mcp>=1.20,<2','--with','pillow','tests/computer_background.py',binary],420)\n  File \"/Users/ecoo/project/agent/lessagent/output/control-fix/verify_release.py\", line 19, in check\n    if p.returncode:raise RuntimeError(name+' failed; see '+str(OUT/(name+'.log')))\nRuntimeError: background-controls failed; see /Users/ecoo/project/agent/lessagent/output/control-fix/release-verification/background-controls.log\n",
+  "finished": 1788892896.528003
+}

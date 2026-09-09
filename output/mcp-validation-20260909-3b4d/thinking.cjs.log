@@ -1,0 +1,12 @@
+AssertionError [ERR_ASSERTION]: The expression evaluated to a falsy value:
+
+  assert.ok(w.document.querySelector('.thinking-menu'))
+
+    at /Users/ecoo/project/agent/lessagent/tests/thinking.cjs:19:36 {
+  generatedMessage: true,
+  code: 'ERR_ASSERTION',
+  actual: null,
+  expected: true,
+  operator: '==',
+  diff: 'simple'
+}

@@ -1,0 +1,13 @@
+{
+  "started": 1788897042.7007282,
+  "passed": true,
+  "pid": 71278,
+  "executable": "/Users/ecoo/project/agent/lessagent/target/release/lessagent",
+  "binary_sha256": "fa375c7b0ce37e943de09640cc1dc8bdcbca5330ae3cf67987a63d45d65ca618",
+  "health": {
+    "management_api": 1,
+    "ok": true,
+    "service": "lessagent"
+  },
+  "finished": 1788897043.743542
+}

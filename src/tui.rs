@@ -79,10 +79,10 @@ pub async fn run(base: &str, token: &str) -> Result<()> {
                     .map_err(crate::Error::from)
                 }
                 .await;
-                if let Ok(state) = result {
-                    if updates.send(state).is_err() {
-                        break;
-                    }
+                if let Ok(state) = result
+                    && updates.send(state).is_err()
+                {
+                    break;
                 }
             }
             tokio::time::sleep(Duration::from_millis(500)).await;
@@ -110,14 +110,13 @@ pub async fn run(base: &str, token: &str) -> Result<()> {
             .as_array()
             .map(Vec::as_slice)
             .unwrap_or(&[]);
-        if let Some(id) = &pending_workspace {
-            if let Some(index) = workspaces
+        if let Some(id) = &pending_workspace
+            && let Some(index) = workspaces
                 .iter()
                 .position(|w| w["id"].as_str() == Some(id.as_str()))
-            {
-                selected = index;
-                pending_workspace = None;
-            }
+        {
+            selected = index;
+            pending_workspace = None;
         }
         selected = selected.min(workspaces.len().saturating_sub(1));
         let workspace = workspaces.get(selected);

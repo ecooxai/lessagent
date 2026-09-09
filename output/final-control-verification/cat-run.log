@@ -1,0 +1,31 @@
+PASS initial paint observation
+PASS stroke input
+PASS select stroke value
+PASS set stroke to 6
+PASS commit stroke value
+PASS tail
+PASS body
+PASS head
+PASS left ear
+PASS right ear
+PASS left eye
+PASS right eye
+PASS nose
+PASS left smile
+PASS right smile
+PASS left whisker 1
+PASS left whisker 2
+PASS left whisker 3
+PASS right whisker 1
+PASS right whisker 2
+PASS right whisker 3
+PASS chest fur
+PASS left leg
+PASS right leg
+PASS left toe 1
+PASS left toe 2
+PASS right toe 1
+PASS right toe 2
+PASS forehead stripe 1
+PASS forehead stripe 2
+PASS forehead stripe 3

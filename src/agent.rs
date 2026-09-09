@@ -269,7 +269,7 @@ fn tag_blocks<'a>(text: &'a str, name: &str) -> Vec<&'a str> {
 fn valid_light_computer_action(value: &Value) -> bool {
     matches!(
         value["action"].as_str(),
-        Some("screenshot" | "move" | "click" | "drag" | "type" | "key" | "scroll")
+        Some("windows" | "screenshot" | "move" | "click" | "drag" | "type" | "key" | "scroll")
     )
 }
 
@@ -314,7 +314,14 @@ fn parse_light_computer_line(line: &str) -> Option<Value> {
             let raw = raw.trim().trim_matches(['"', '\'']);
             if matches!(
                 key,
-                "x" | "y" | "to_x" | "to_y" | "screen_width" | "screen_height" | "delta"
+                "x" | "y"
+                    | "to_x"
+                    | "to_y"
+                    | "screen_width"
+                    | "screen_height"
+                    | "window_id"
+                    | "pid"
+                    | "delta"
             ) {
                 if let Ok(number) = raw.parse::<i64>() {
                     object.insert(key.into(), json!(number));
@@ -536,10 +543,7 @@ fn move_light_bookkeeping(source: &std::path::Path, destination: &std::path::Pat
     let mut dirs = Vec::new();
     let mut stack = vec![source.to_path_buf()];
     while let Some(dir) = stack.pop() {
-        let entries = match std::fs::read_dir(&dir) {
-            Ok(entries) => entries,
-            Err(error) => return Err(error.into()),
-        };
+        let entries = std::fs::read_dir(&dir)?;
         for entry in entries {
             let entry = entry?;
             let path = entry.path();
@@ -778,6 +782,7 @@ async fn run(
     let mut turns = vec![];
     let mut progress = String::new();
     let mut screenshots = vec![];
+    let mut latest_computer_image: Option<context::Image> = None;
     let mut context_files: Vec<String> = vec![];
     let mut project_file_tokens: Vec<Value> = vec![];
     let mut latest_reply = String::new();
@@ -869,6 +874,14 @@ async fn run(
                 ),
             )];
             turns[0].images = images;
+            // Normal mode rebuilds turns from context each iteration. Preserve
+            // the latest computer observation even when no test command ran.
+            if let Some(image) = &latest_computer_image {
+                turns[0]
+                    .images
+                    .retain(|existing| existing.path != image.path);
+                turns[0].images.push(image.clone());
+            }
         }
         if w.mode == "light" {
             let b = bundle(
@@ -921,7 +934,7 @@ async fn run(
         // Stable messages precede the changing context to preserve the cacheable prefix.
         let instructions = if w.mode == "light" {
             format!(
-                "Light mode has no native tools or function calls. Work directly from the complete selected project context and every file currently under agent/output; output-history and agent continuity records are excluded. Reply in Markdown using separate <review>current status</review>, optional <summary>concise factual handoff</summary> (saved in the internal continuity directory), <scores>0-10</scores> (or <score>0-10</score>), <plan>next concrete step</plan>, and <done>true</done> or <done>false</done> tags. Put every command that must run in <bash>...</bash> or <python>...</python>; do not merely describe a command. Create, compile, test, or render the requested deliverable with those blocks. For desktop control, put one JSON object or array in <computer>...</computer> (for example {{\"action\":\"screenshot\"}} or {{\"action\":\"click\",\"x\":420,\"y\":180,\"screen_width\":1440,\"screen_height\":900}}); take a screenshot first, use its reported screen_width/screen_height for pointer coordinates, and wait for the result before clicking. Lessagent converts screenshot pixels to macOS logical points on Retina displays and returns the action result. LESSAGENT_OUTPUT_DIR is the artifact-only iteration directory: put real deliverables there, such as compiled binaries, screenshots, images, or other files the user needs. Do not create actions.json, result.json, state.json, summary.md, or any .log file in LESSAGENT_OUTPUT_DIR. LESSAGENT_LOG_DIR points to an internal continuity directory for command logs and other bookkeeping; redirect stdout and stderr there when a log is useful (for example: command > $LESSAGENT_LOG_DIR/build.log 2>&1). If an output is not pure text, use a command to verify only its text metadata or text portion; do not try to prove binary bytes with pasted text. For binary outputs such as images, write the file under LESSAGENT_OUTPUT_DIR and leave it for the next request, when it will be attached for visual review. Lasting deliverables belong in the project outside temporary iteration folders. Inspect every current agent/output file and the next request will include any supported images. Do not use echo test pass or other placeholder proof, do not repeat completed work, and do not claim success without an actual result. Include <done>true</done> only after the requested behavior is implemented and meaningfully verified with a score of at least {}. Keep the response concise and executable.",
+                "Light mode has no native tools or function calls. Work directly from the complete selected project context and every file currently under agent/output; output-history and agent continuity records are excluded. Reply in Markdown using separate <review>current status</review>, optional <summary>concise factual handoff</summary> (saved in the internal continuity directory), <scores>0-10</scores> (or <score>0-10</score>), <plan>next concrete step</plan>, and <done>true</done> or <done>false</done> tags. Put every command that must run in <bash>...</bash> or <python>...</python>; do not merely describe a command. Create, compile, test, or render the requested deliverable with those blocks. For Chrome, first use action browser_open with an HTTP(S) url to create a controlled background window, then reuse its returned window_id and pid for all page input. Managed Chrome uses independent browser-local input and raw page capture padded to window coordinates; the browser toolbar band is explicitly uncaptured and must not be clicked; never fall back to the normal Chrome profile or the shared pointer. For other macOS background control, first use action windows, select window_id and pid, and pass both for every screenshot and input action. Coordinates are window-local; pass the dimensions returned by that window screenshot, never desktop dimensions. A drag supports path:[[x,y],...] for continuous drawing. Background input uses a light blue virtual pointer, dark blue while left-pressed or dragging, and preserves the shared system pointer. Take one initial screenshot; every input action then waits two seconds and automatically saves and attaches a fresh screenshot for the next request. Use that observation to decide the next action; do not request redundant screenshots. On macOS desktop/system-pointer input is forbidden, even when explicitly requested; there is never a fallback. The virtual pointer retains a transparent fill with an outline after 10 seconds idle and disappears at 30 seconds; input resets the timer but observations do not. On Linux only, for desktop control, put one JSON object or array in <computer>...</computer> (for example {{\"action\":\"screenshot\"}} or {{\"action\":\"click\",\"x\":420,\"y\":180,\"screen_width\":1440,\"screen_height\":900}}); take a screenshot first, use its reported screen_width/screen_height for pointer coordinates, and wait for the result before clicking. Lessagent converts screenshot pixels to macOS logical points on Retina displays and returns the action result. LESSAGENT_OUTPUT_DIR is the artifact-only iteration directory: put real deliverables there, such as compiled binaries, screenshots, images, or other files the user needs. Do not create actions.json, result.json, state.json, summary.md, or any .log file in LESSAGENT_OUTPUT_DIR. LESSAGENT_LOG_DIR points to an internal continuity directory for command logs and other bookkeeping; redirect stdout and stderr there when a log is useful (for example: command > $LESSAGENT_LOG_DIR/build.log 2>&1). If an output is not pure text, use a command to verify only its text metadata or text portion; do not try to prove binary bytes with pasted text. For binary outputs such as images, write the file under LESSAGENT_OUTPUT_DIR and leave it for the next request, when it will be attached for visual review. Lasting deliverables belong in the project outside temporary iteration folders. Inspect every current agent/output file and the next request will include any supported images. Do not use echo test pass or other placeholder proof, do not repeat completed work, and do not claim success without an actual result. Include <done>true</done> only after the requested behavior is implemented and meaningfully verified with a score of at least {}. Keep the response concise and executable.",
                 settings.quality_threshold
             )
         } else {
@@ -1079,11 +1092,17 @@ async fn run(
                 crate::computer::screen_info().and_then(|info| screen_dimensions(&info));
             for mut arguments in light_computer_actions(&reply.text) {
                 computer_index += 1;
-                if arguments["action"] == "screenshot" {
+                if arguments["action"] != "windows" {
                     arguments["capture_path"] = json!(format!(
                         "{artifact_relative}/computer-{computer_index:02}.png"
                     ));
-                } else if let Some((width, height)) = light_screen {
+                }
+                if !matches!(
+                    arguments["action"].as_str(),
+                    Some("screenshot" | "browser_open")
+                ) && arguments.get("window_id").is_none()
+                    && let Some((width, height)) = light_screen
+                {
                     // A model may omit the dimensions after a screenshot. Keep
                     // the coordinate space explicit so macOS can scale Retina
                     // pixels into Quartz points consistently.
@@ -1115,7 +1134,9 @@ async fn run(
                         }),
                     };
                 let result = without_embedded_image(&result);
-                if let Some(dimensions) = screen_dimensions(&result) {
+                if arguments.get("window_id").is_none()
+                    && let Some(dimensions) = screen_dimensions(&result)
+                {
                     light_screen = Some(dimensions);
                 }
                 app.event(
@@ -1235,7 +1256,7 @@ async fn run(
             if !light_results.is_empty() {
                 let model_results = light_results
                     .iter()
-                    .map(|result| model_observation(result))
+                    .map(model_observation)
                     .collect::<Vec<_>>();
                 message.push_str(&format!(
                     "\nAction results: {}",
@@ -1363,7 +1384,7 @@ async fn run(
                 call.arguments["command"] =
                     json!(format!("export LESSAGENT_OUTPUT_DIR='{dir}'\n{command}"));
             }
-            if call.name == "computer" && call.arguments["action"] == "screenshot" {
+            if call.name == "computer" && call.arguments["action"] != "windows" {
                 // Keep screenshots produced by native tool calls in the same
                 // user-visible artifact tree as Light-mode captures.
                 call.arguments["capture_path"] = json!(format!(
@@ -1441,14 +1462,18 @@ async fn run(
                     )?;
                     crate::state::atomic_write(&capture, &bytes)?;
                 }
-                screenshots = vec![context::Image {
+                let image = context::Image {
                     path,
                     mime: result["image"]["mime"]
                         .as_str()
                         .unwrap_or("image/png")
                         .into(),
                     data: data.into(),
-                }];
+                };
+                if call.name == "computer" {
+                    latest_computer_image = Some(image.clone());
+                }
+                screenshots = vec![image];
             }
             results
                 .results

@@ -1,0 +1,238 @@
+{
+  "passed": false,
+  "binary": "/Users/ecoo/project/agent/lessagent/output/final-control-verification/lessagent-verified-release",
+  "input_delivery": "chrome-devtools Input + native window observation; no DOM event injection",
+  "failure": "meta=None content=[TextContent(type='text', text='Error: Target must be on the current desktop and not minimized; it may be behind other windows', annotations=None, meta=None)] structuredContent={'result': {'error': 'Target must be on the current desktop and not minimized; it may be behind other windows'}} isError=True",
+  "traceback": "Traceback (most recent call last):\n  File \"/Users/ecoo/project/agent/lessagent/tests/computer_background.py\", line 165, in <module>\n    x,y=at('click-test');es=input_action('left click',transport,action='click',x=x,y=y)\n                            ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^\n  File \"/Users/ecoo/project/agent/lessagent/tests/computer_background.py\", line 129, in input_action\n    raw=mcp(target_args|args,transport); r=unpack(raw)\n                                           ^^^^^^^^^^^\n  File \"/Users/ecoo/project/agent/lessagent/tests/computer_background.py\", line 71, in unpack\n    assert not result.isError,result\n           ^^^^^^^^^^^^^^^^^^\nAssertionError: meta=None content=[TextContent(type='text', text='Error: Target must be on the current desktop and not minimized; it may be behind other windows', annotations=None, meta=None)] structuredContent={'result': {'error': 'Target must be on the current desktop and not minimized; it may be behind other windows'}} isError=True\n",
+  "accuracy": [],
+  "idle_samples": [],
+  "results": [
+    {
+      "action": "click",
+      "after": {
+        "cursor_x": 868.1640625,
+        "cursor_y": 458.7734375,
+        "front_window_id": 148,
+        "frontmost_bundle": "com.google.Chrome",
+        "frontmost_pid": 1182,
+        "physical_key_down_count": 7145,
+        "physical_left_down_count": 3574,
+        "physical_right_down_count": 32
+      },
+      "automatic_screenshot": true,
+      "before": {
+        "cursor_x": 868.1640625,
+        "cursor_y": 458.7734375,
+        "front_window_id": 148,
+        "frontmost_bundle": "com.google.Chrome",
+        "frontmost_pid": 1182,
+        "physical_key_down_count": 7145,
+        "physical_left_down_count": 3574,
+        "physical_right_down_count": 32
+      },
+      "coordinate_space": "window",
+      "delivery": "chrome-devtools",
+      "desktop": {
+        "cursor_x": 868.1640625,
+        "cursor_y": 458.7734375,
+        "front_window_id": 7676,
+        "frontmost_bundle": "com.google.Chrome",
+        "frontmost_pid": 1182,
+        "physical_key_down_count": 7145,
+        "physical_left_down_count": 3574,
+        "physical_right_down_count": 32
+      },
+      "input_events_posted": 3,
+      "logical_height": 750,
+      "logical_width": 1000,
+      "mime": "image/png",
+      "mode": "background",
+      "native_input_events_posted": 0,
+      "observation_delay_ms": 2000,
+      "ok": true,
+      "page_zoom": 1,
+      "path": "/Users/ecoo/project/agent/lessagent/agent/output/computer/f3301a19e41d6570e88d68602876050a.png",
+      "pid": 63398,
+      "pointer": {
+        "fill_alpha": 1,
+        "hide_after_seconds": 30,
+        "idle_seconds": 2.380929416664003,
+        "left_pressed": false,
+        "panel_visible": true,
+        "panel_window_id": 7985,
+        "phase": "active",
+        "pid": 63398,
+        "transparent_after_seconds": 10,
+        "visible": true,
+        "window_id": 7978,
+        "x": 472,
+        "y": 156
+      },
+      "pointer_color": "#7DD4FF",
+      "pointer_overlay": true,
+      "pointer_pressed_color": "#2563EB",
+      "responder_lease": false,
+      "screen_height": 1500,
+      "screen_width": 2000,
+      "viewport_inset_x": 0,
+      "viewport_inset_y": 87,
+      "window_id": 7978,
+      "label": "left click",
+      "transport": "mcp-http"
+    }
+  ],
+  "recorded_events": [
+    {
+      "seq": 1,
+      "type": "ready",
+      "geometry": {
+        "name": {
+          "x": 150,
+          "y": 54,
+          "width": 240,
+          "height": 29
+        },
+        "click-test": {
+          "x": 425,
+          "y": 54,
+          "width": 93.328125,
+          "height": 29
+        },
+        "clear": {
+          "x": 555,
+          "y": 54,
+          "width": 51.859375,
+          "height": 29
+        },
+        "range": {
+          "x": 692,
+          "y": 56,
+          "width": 160,
+          "height": 29
+        },
+        "canvas": {
+          "x": 0,
+          "y": 100,
+          "width": 1000,
+          "height": 600
+        },
+        "scrollbox": {
+          "x": 860,
+          "y": 155,
+          "width": 125,
+          "height": 250
+        },
+        "scrollbox2": {
+          "x": 730,
+          "y": 155,
+          "width": 110,
+          "height": 250
+        }
+      },
+      "innerWidth": 1000,
+      "innerHeight": 663,
+      "outerWidth": 1000,
+      "outerHeight": 750,
+      "devicePixelRatio": 2
+    },
+    {
+      "seq": 2,
+      "type": "plan-ready",
+      "planId": 0
+    },
+    {
+      "seq": 3,
+      "type": "window-focus"
+    },
+    {
+      "seq": 4,
+      "type": "window-focus"
+    },
+    {
+      "seq": 5,
+      "type": "pointermove",
+      "x": 472,
+      "y": 69,
+      "canvasX": 472,
+      "canvasY": -31,
+      "button": -1,
+      "buttons": 0,
+      "meta": false,
+      "ctrl": false,
+      "alt": false,
+      "shift": false,
+      "detail": 0,
+      "target": "click-test",
+      "trusted": true,
+      "focused": true,
+      "value": "",
+      "planId": 0
+    },
+    {
+      "seq": 6,
+      "type": "pointerdown",
+      "x": 472,
+      "y": 69,
+      "canvasX": 472,
+      "canvasY": -31,
+      "button": 0,
+      "buttons": 1,
+      "meta": false,
+      "ctrl": false,
+      "alt": false,
+      "shift": false,
+      "detail": 0,
+      "target": "click-test",
+      "trusted": true,
+      "focused": true,
+      "value": "",
+      "planId": 0
+    },
+    {
+      "seq": 7,
+      "type": "pointerup",
+      "x": 472,
+      "y": 69,
+      "canvasX": 472,
+      "canvasY": -31,
+      "button": 0,
+      "buttons": 0,
+      "meta": false,
+      "ctrl": false,
+      "alt": false,
+      "shift": false,
+      "detail": 0,
+      "target": "click-test",
+      "trusted": true,
+      "focused": true,
+      "value": "",
+      "planId": 0
+    },
+    {
+      "seq": 8,
+      "type": "click",
+      "x": 472,
+      "y": 69,
+      "canvasX": 472,
+      "canvasY": -31,
+      "button": 0,
+      "buttons": 0,
+      "meta": false,
+      "ctrl": false,
+      "alt": false,
+      "shift": false,
+      "detail": 1,
+      "target": "click-test",
+      "trusted": true,
+      "focused": true,
+      "value": "",
+      "planId": 0
+    },
+    {
+      "seq": 9,
+      "type": "button-click",
+      "clicks": 1
+    }
+  ],
+  "checks": []
+}

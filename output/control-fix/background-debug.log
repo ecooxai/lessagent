@@ -1,0 +1,10 @@
+PASS input left click mcp-http
+PASS input left click mcp-stdio
+PASS input left click api
+PASS check left click exactly once / normal API + both MCP transports
+PASS input right click mcp-http
+Traceback (most recent call last):
+  File "/Users/ecoo/project/agent/lessagent/tests/computer_background.py", line 146, in <module>
+    assert any(e['type']=='pointerdown' and e['button']==2 and e['buttons']==2 for e in es),es
+           ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+AssertionError: [{'seq': 26, 'type': 'window-focus'}, {'seq': 27, 'type': 'pointermove', 'x': 700, 'y': 280, 'canvasX': 700, 'canvasY': 180, 'button': 2, 'buttons': 3, 'meta': False, 'ctrl': False, 'alt': False, 'shift': False, 'detail': 0, 'target': 'canvas', 'trusted': True, 'focused': True, 'planId': 0}, {'seq': 28, 'type': 'contextmenu', 'x': 700, 'y': 280, 'canvasX': 700, 'canvasY': 180, 'button': 2, 'buttons': 3, 'meta': False, 'ctrl': False, 'alt': False, 'shift': False, 'detail': 0, 'target': 'canvas', 'trusted': True, 'focused': True, 'planId': 0}, {'seq': 29, 'type': 'pointermove', 'x': 700, 'y': 280, 'canvasX': 700, 'canvasY': 180, 'button': 2, 'buttons': 1, 'meta': False, 'ctrl': False, 'alt': False, 'shift': False, 'detail': 0, 'target': 'canvas', 'trusted': True, 'focused': True, 'planId': 0}, {'seq': 30, 'type': 'window-blur'}]

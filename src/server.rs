@@ -123,7 +123,12 @@ async fn auth(State(app): State<Arc<App>>, req: Request, next: Next) -> Response
     let authorization = h.get(header::AUTHORIZATION).and_then(|v| v.to_str().ok());
     let authenticated = authorization == Some(format!("Bearer {}", app.token).as_str());
     let path = req.uri().path();
-    let token_required = path == "/mcp" || path.starts_with("/api/admin/");
+    // MCP is deliberately public, including remote clients and installations
+    // with a browser password. Retain the origin checks above for browser calls.
+    if path == "/mcp" {
+        return next.run(req).await;
+    }
+    let token_required = path.starts_with("/api/admin/");
     let password_required = app.password.lock().unwrap().is_some();
     if path != "/api/login"
         && !authenticated
@@ -226,8 +231,8 @@ async fn inventory(State(app): State<Arc<App>>, Path(id): Path<String>) -> Api {
 /// endpoint only needs the artifact path (and the dimensions already returned
 /// by `computer::action`), so remove the binary payload at this boundary.
 fn strip_api_screenshot_image(name: &str, args: &Value, result: &mut Value) {
-    if name == "computer"
-        && args["action"] == "screenshot"
+    if matches!(name, "computer" | "browser_open")
+        && (args["action"] == "screenshot" || result["automatic_screenshot"] == true)
         && let Some(object) = result.as_object_mut()
     {
         object.remove("image");
@@ -641,6 +646,25 @@ mod tests {
         assert_eq!(result["path"], "agent/output/screenshot.png");
         assert_eq!(result["screen_width"], 2560);
         assert!(result.get("image").is_none());
+    }
+
+    #[test]
+    fn automatic_observations_drop_binary_only_at_browser_api_boundary() {
+        let mut result = json!({"ok":true,"automatic_screenshot":true,"path":"output/click.png",
+            "image":{"mime":"image/png","data":"large-base64"},"window_id":5});
+        strip_api_screenshot_image("computer", &json!({"action":"click"}), &mut result);
+        assert!(result.get("image").is_none());
+        assert_eq!(result["path"], "output/click.png");
+        assert_eq!(result["window_id"], 5);
+        let mut opened = json!({"automatic_screenshot":true,"path":"output/browser.png",
+            "image":{"mime":"image/png","data":"large-base64"},"pid":8});
+        strip_api_screenshot_image(
+            "browser_open",
+            &json!({"url":"http://127.0.0.1:4173/"}),
+            &mut opened,
+        );
+        assert!(opened.get("image").is_none());
+        assert_eq!(opened["pid"], 8);
     }
 
     #[test]

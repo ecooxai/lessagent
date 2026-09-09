@@ -1,0 +1,597 @@
+[
+  {
+    "post": "public",
+    "cg": false,
+    "stamp": true,
+    "flags": 0,
+    "subtype": 3,
+    "tags": 0,
+    "result": {
+      "action": "click",
+      "after": {
+        "cursor_x": 784.0234375,
+        "cursor_y": 576.73828125,
+        "frontmost_bundle": "com.apple.finder",
+        "frontmost_pid": 1212
+      },
+      "before": {
+        "cursor_x": 783.734375,
+        "cursor_y": 575.83203125,
+        "frontmost_bundle": "com.apple.finder",
+        "frontmost_pid": 1212
+      },
+      "coordinate_space": "window",
+      "mode": "background",
+      "ok": true,
+      "pid": 31478,
+      "pointer_color": "#7DD4FF",
+      "pointer_pressed_color": "#2563EB",
+      "tag_result": -999,
+      "virtual_pointer": {
+        "x": 220,
+        "y": 97
+      },
+      "window_id": 5597
+    },
+    "after_observation": {
+      "cursor_x": 781.80859375,
+      "cursor_y": 576.73828125,
+      "frontmost_bundle": "com.apple.finder",
+      "frontmost_pid": 1212
+    },
+    "events": [
+      {
+        "type": "focus",
+        "trusted": true,
+        "focused": true,
+        "value": ""
+      },
+      {
+        "type": "pointermove",
+        "x": 762.0234375,
+        "y": 522.73828125,
+        "button": -1,
+        "buttons": 0,
+        "meta": false,
+        "ctrl": false,
+        "shift": false,
+        "trusted": true,
+        "focused": true,
+        "value": ""
+      },
+      {
+        "type": "pointerdown",
+        "x": 220,
+        "y": 65,
+        "button": 0,
+        "buttons": 1,
+        "meta": false,
+        "ctrl": false,
+        "shift": false,
+        "trusted": true,
+        "focused": true,
+        "value": ""
+      },
+      {
+        "type": "focus",
+        "trusted": true,
+        "focused": true,
+        "value": ""
+      },
+      {
+        "type": "pointerup",
+        "x": 220,
+        "y": 65,
+        "button": 0,
+        "buttons": 0,
+        "meta": false,
+        "ctrl": false,
+        "shift": false,
+        "trusted": true,
+        "focused": true,
+        "value": ""
+      },
+      {
+        "type": "click",
+        "x": 220,
+        "y": 65,
+        "button": 0,
+        "buttons": 0,
+        "meta": false,
+        "ctrl": false,
+        "shift": false,
+        "trusted": true,
+        "focused": true,
+        "value": ""
+      },
+      {
+        "type": "blur",
+        "trusted": true,
+        "focused": false,
+        "value": ""
+      },
+      {
+        "type": "blur",
+        "trusted": true,
+        "focused": false,
+        "value": ""
+      }
+    ]
+  },
+  {
+    "post": "public",
+    "cg": true,
+    "stamp": true,
+    "flags": 0,
+    "subtype": 3,
+    "tags": 0,
+    "result": {
+      "action": "click",
+      "after": {
+        "cursor_x": 781.80859375,
+        "cursor_y": 576.73828125,
+        "frontmost_bundle": "com.apple.finder",
+        "frontmost_pid": 1212
+      },
+      "before": {
+        "cursor_x": 781.80859375,
+        "cursor_y": 576.73828125,
+        "frontmost_bundle": "com.apple.finder",
+        "frontmost_pid": 1212
+      },
+      "coordinate_space": "window",
+      "mode": "background",
+      "ok": true,
+      "pid": 31478,
+      "pointer_color": "#7DD4FF",
+      "pointer_pressed_color": "#2563EB",
+      "tag_result": -999,
+      "virtual_pointer": {
+        "x": 220,
+        "y": 97
+      },
+      "window_id": 5597
+    },
+    "after_observation": {
+      "cursor_x": 781.80859375,
+      "cursor_y": 576.73828125,
+      "frontmost_bundle": "com.apple.finder",
+      "frontmost_pid": 1212
+    },
+    "events": [
+      {
+        "type": "focus",
+        "trusted": true,
+        "focused": true,
+        "value": ""
+      },
+      {
+        "type": "focus",
+        "trusted": true,
+        "focused": true,
+        "value": ""
+      },
+      {
+        "type": "pointermove",
+        "x": 220,
+        "y": 65,
+        "button": -1,
+        "buttons": 0,
+        "meta": false,
+        "ctrl": false,
+        "shift": false,
+        "trusted": true,
+        "focused": true,
+        "value": ""
+      },
+      {
+        "type": "pointerdown",
+        "x": 220,
+        "y": 65,
+        "button": 0,
+        "buttons": 1,
+        "meta": false,
+        "ctrl": false,
+        "shift": false,
+        "trusted": true,
+        "focused": true,
+        "value": ""
+      },
+      {
+        "type": "pointerup",
+        "x": 220,
+        "y": 65,
+        "button": 0,
+        "buttons": 0,
+        "meta": false,
+        "ctrl": false,
+        "shift": false,
+        "trusted": true,
+        "focused": true,
+        "value": ""
+      },
+      {
+        "type": "click",
+        "x": 220,
+        "y": 65,
+        "button": 0,
+        "buttons": 0,
+        "meta": false,
+        "ctrl": false,
+        "shift": false,
+        "trusted": true,
+        "focused": true,
+        "value": ""
+      },
+      {
+        "type": "blur",
+        "trusted": true,
+        "focused": false,
+        "value": ""
+      },
+      {
+        "type": "blur",
+        "trusted": true,
+        "focused": false,
+        "value": ""
+      }
+    ]
+  },
+  {
+    "post": "sl",
+    "cg": false,
+    "stamp": true,
+    "flags": 0,
+    "subtype": 3,
+    "tags": 0,
+    "result": {
+      "action": "click",
+      "after": {
+        "cursor_x": 781.80859375,
+        "cursor_y": 577.734375,
+        "frontmost_bundle": "com.apple.finder",
+        "frontmost_pid": 1212
+      },
+      "before": {
+        "cursor_x": 781.80859375,
+        "cursor_y": 577.734375,
+        "frontmost_bundle": "com.apple.finder",
+        "frontmost_pid": 1212
+      },
+      "coordinate_space": "window",
+      "mode": "background",
+      "ok": true,
+      "pid": 31478,
+      "pointer_color": "#7DD4FF",
+      "pointer_pressed_color": "#2563EB",
+      "tag_result": -999,
+      "virtual_pointer": {
+        "x": 220,
+        "y": 97
+      },
+      "window_id": 5597
+    },
+    "after_observation": {
+      "cursor_x": 822.34375,
+      "cursor_y": 591.34765625,
+      "frontmost_bundle": "com.apple.finder",
+      "frontmost_pid": 1212
+    },
+    "events": [
+      {
+        "type": "focus",
+        "trusted": true,
+        "focused": true,
+        "value": ""
+      },
+      {
+        "type": "focus",
+        "trusted": true,
+        "focused": true,
+        "value": ""
+      },
+      {
+        "type": "pointermove",
+        "x": 220,
+        "y": 65,
+        "button": -1,
+        "buttons": 0,
+        "meta": false,
+        "ctrl": false,
+        "shift": false,
+        "trusted": true,
+        "focused": true,
+        "value": ""
+      },
+      {
+        "type": "pointerdown",
+        "x": 220,
+        "y": 65,
+        "button": 0,
+        "buttons": 1,
+        "meta": false,
+        "ctrl": false,
+        "shift": false,
+        "trusted": true,
+        "focused": true,
+        "value": ""
+      },
+      {
+        "type": "pointerup",
+        "x": 220,
+        "y": 65,
+        "button": 0,
+        "buttons": 0,
+        "meta": false,
+        "ctrl": false,
+        "shift": false,
+        "trusted": true,
+        "focused": true,
+        "value": ""
+      },
+      {
+        "type": "click",
+        "x": 220,
+        "y": 65,
+        "button": 0,
+        "buttons": 0,
+        "meta": false,
+        "ctrl": false,
+        "shift": false,
+        "trusted": true,
+        "focused": true,
+        "value": ""
+      },
+      {
+        "type": "blur",
+        "trusted": true,
+        "focused": false,
+        "value": ""
+      },
+      {
+        "type": "blur",
+        "trusted": true,
+        "focused": false,
+        "value": ""
+      }
+    ]
+  },
+  {
+    "post": "sl",
+    "cg": true,
+    "stamp": true,
+    "flags": 0,
+    "subtype": 3,
+    "tags": 0,
+    "result": {
+      "action": "click",
+      "after": {
+        "cursor_x": 1136.58984375,
+        "cursor_y": 712.2109375,
+        "frontmost_bundle": "com.apple.finder",
+        "frontmost_pid": 1212
+      },
+      "before": {
+        "cursor_x": 1143.54296875,
+        "cursor_y": 666.1484375,
+        "frontmost_bundle": "com.apple.finder",
+        "frontmost_pid": 1212
+      },
+      "coordinate_space": "window",
+      "mode": "background",
+      "ok": true,
+      "pid": 31478,
+      "pointer_color": "#7DD4FF",
+      "pointer_pressed_color": "#2563EB",
+      "tag_result": -999,
+      "virtual_pointer": {
+        "x": 220,
+        "y": 97
+      },
+      "window_id": 5597
+    },
+    "after_observation": {
+      "cursor_x": 1136.1015625,
+      "cursor_y": 713.2578125,
+      "frontmost_bundle": "com.apple.finder",
+      "frontmost_pid": 1212
+    },
+    "events": [
+      {
+        "type": "focus",
+        "trusted": true,
+        "focused": true,
+        "value": ""
+      },
+      {
+        "type": "focus",
+        "trusted": true,
+        "focused": true,
+        "value": ""
+      },
+      {
+        "type": "pointermove",
+        "x": 220,
+        "y": 65,
+        "button": -1,
+        "buttons": 0,
+        "meta": false,
+        "ctrl": false,
+        "shift": false,
+        "trusted": true,
+        "focused": true,
+        "value": ""
+      },
+      {
+        "type": "pointerdown",
+        "x": 220,
+        "y": 65,
+        "button": 0,
+        "buttons": 1,
+        "meta": false,
+        "ctrl": false,
+        "shift": false,
+        "trusted": true,
+        "focused": true,
+        "value": ""
+      },
+      {
+        "type": "pointerup",
+        "x": 220,
+        "y": 65,
+        "button": 0,
+        "buttons": 0,
+        "meta": false,
+        "ctrl": false,
+        "shift": false,
+        "trusted": true,
+        "focused": true,
+        "value": ""
+      },
+      {
+        "type": "click",
+        "x": 220,
+        "y": 65,
+        "button": 0,
+        "buttons": 0,
+        "meta": false,
+        "ctrl": false,
+        "shift": false,
+        "trusted": true,
+        "focused": true,
+        "value": ""
+      },
+      {
+        "type": "blur",
+        "trusted": true,
+        "focused": false,
+        "value": ""
+      },
+      {
+        "type": "blur",
+        "trusted": true,
+        "focused": false,
+        "value": ""
+      }
+    ]
+  },
+  {
+    "post": "sl",
+    "cg": true,
+    "stamp": true,
+    "flags": 0,
+    "subtype": 0,
+    "tags": 0,
+    "result": {
+      "action": "click",
+      "after": {
+        "cursor_x": 1134.984375,
+        "cursor_y": 713.2578125,
+        "frontmost_bundle": "com.google.Chrome",
+        "frontmost_pid": 1182
+      },
+      "before": {
+        "cursor_x": 1134.984375,
+        "cursor_y": 713.2578125,
+        "frontmost_bundle": "com.google.Chrome",
+        "frontmost_pid": 1182
+      },
+      "coordinate_space": "window",
+      "mode": "background",
+      "ok": true,
+      "pid": 31478,
+      "pointer_color": "#7DD4FF",
+      "pointer_pressed_color": "#2563EB",
+      "tag_result": -999,
+      "virtual_pointer": {
+        "x": 220,
+        "y": 97
+      },
+      "window_id": 5597
+    },
+    "after_observation": {
+      "cursor_x": 1134.984375,
+      "cursor_y": 713.2578125,
+      "frontmost_bundle": "com.google.Chrome",
+      "frontmost_pid": 1182
+    },
+    "events": [
+      {
+        "type": "focus",
+        "trusted": true,
+        "focused": true,
+        "value": ""
+      },
+      {
+        "type": "focus",
+        "trusted": true,
+        "focused": true,
+        "value": ""
+      },
+      {
+        "type": "pointermove",
+        "x": 220,
+        "y": 65,
+        "button": -1,
+        "buttons": 0,
+        "meta": false,
+        "ctrl": false,
+        "shift": false,
+        "trusted": true,
+        "focused": true,
+        "value": ""
+      },
+      {
+        "type": "pointerdown",
+        "x": 220,
+        "y": 65,
+        "button": 0,
+        "buttons": 1,
+        "meta": false,
+        "ctrl": false,
+        "shift": false,
+        "trusted": true,
+        "focused": true,
+        "value": ""
+      },
+      {
+        "type": "pointerup",
+        "x": 220,
+        "y": 65,
+        "button": 0,
+        "buttons": 0,
+        "meta": false,
+        "ctrl": false,
+        "shift": false,
+        "trusted": true,
+        "focused": true,
+        "value": ""
+      },
+      {
+        "type": "click",
+        "x": 220,
+        "y": 65,
+        "button": 0,
+        "buttons": 0,
+        "meta": false,
+        "ctrl": false,
+        "shift": false,
+        "trusted": true,
+        "focused": true,
+        "value": ""
+      },
+      {
+        "type": "blur",
+        "trusted": true,
+        "focused": false,
+        "value": ""
+      },
+      {
+        "type": "blur",
+        "trusted": true,
+        "focused": false,
+        "value": ""
+      }
+    ]
+  }
+]

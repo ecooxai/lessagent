@@ -1,0 +1,61 @@
+   Compiling lessagent v0.1.0 (/Users/ecoo/project/agent/lessagent)
+    Finished `test` profile [unoptimized + debuginfo] target(s) in 10.40s
+     Running unittests src/lib.rs (target/debug/deps/lessagent-fbce1dd9499e5125)
+
+running 41 tests
+test agent::completion_tests::plain_answers_finish_but_action_tasks_keep_verification ... ok
+test agent::completion_tests::light_history_keeps_only_two_bounded_messages ... ok
+test agent::completion_tests::normal_agent_screenshot_result_keeps_path_without_binary_payload ... ok
+test agent::completion_tests::verification_requires_a_current_non_placeholder_command ... ok
+test computer::tests::background_requires_explicit_window_and_owner ... ok
+test agent::completion_tests::light_computer_protocol_accepts_json_and_readable_lines ... ok
+test computer::tests::background_routing_never_falls_back_to_system_pointer ... ok
+test computer::tests::background_validates_whole_path_before_input ... ok
+test computer::tests::common_validation_rejects_malformed_fields_before_native_events ... ok
+test computer::tests::browser_open_validates_before_launching_any_process ... ok
+test computer::tests::drag_normalization_accepts_from_and_to_pairs ... ok
+test computer::tests::drag_aliases_validate_full_integer_range ... ok
+test computer::tests::drag_normalization_keeps_omitted_axis_at_start ... ok
+test computer::tests::invalid_drag_is_rejected_before_backend_input ... ok
+test agent::completion_tests::continuity_preserves_active_command_and_detects_stalled_polls ... ok
+test computer::tests::macos_rejects_explicit_desktop_for_every_action ... ok
+test computer::tests::path_drag_durations_and_dimensions_do_not_bypass_validation ... ok
+test computer::tests::macos_native_backend_contains_no_global_input_api ... ok
+test computer::tests::scroll_distance_and_coordinates_validate_before_input ... ok
+test agent::completion_tests::recent_ai_messages_pair_results_and_count_separately ... ok
+test context::tests::image_estimate_is_bounded_for_all_aspect_ratios ... ok
+test context::tests::editable_defaults_exclude_noise ... ok
+test context::tests::ignores_nested_files_and_blocks_escape ... ok
+test agent::completion_tests::reviews_use_only_selected_files ... ok
+test context::tests::current_agent_output_includes_all_iterations_and_files ... ok
+test agent::completion_tests::light_context_sends_project_contents_and_refreshes_each_scan ... ok
+test context::tests::text_and_image_token_rules ... ok
+test provider::tests::stable_prefix_cache_options_are_provider_and_model_aware ... ok
+test provider::tests::provider_tool_roundtrips ... ok
+test provider::tests::usage_excludes_cached_input ... ok
+test server::tests::automatic_observations_drop_binary_only_at_browser_api_boundary ... ok
+test server::tests::non_screenshot_results_are_unchanged ... ok
+test server::tests::normal_api_screenshot_keeps_path_but_drops_image_bytes ... ok
+test context::tests::inventory_and_bundle_share_only_latest_output ... ok
+test state::archive_tests::large_events_are_preserved_on_disk_and_migration_is_idempotent ... ok
+test terminal::tests::pty_runs_and_retains_output ... ok
+test terminal::tests::deep_scrollback_survives_resize_and_returns_to_live_screen ... ok
+test context::tests::threshold_is_strict ... ok
+test terminal::tests::restores_only_latest_thirty_without_retaining_screens ... ok
+test terminal::tests::busy_terminal_log_is_bounded_and_restorable ... ok
+test git::tests::branches_and_discard ... ok
+
+test result: ok. 41 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 2.17s
+
+     Running unittests src/main.rs (target/debug/deps/lessagent-c7f6d75e66b993b8)
+
+running 0 tests
+
+test result: ok. 0 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.00s
+
+   Doc-tests lessagent
+
+running 0 tests
+
+test result: ok. 0 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.00s
+

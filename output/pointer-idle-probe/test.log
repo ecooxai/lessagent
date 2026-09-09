@@ -1,0 +1,8 @@
+active {'size': (72, 80), 'blue_pixels': 1085, 'nontransparent_pixels': 1945, 'alpha_range': (0, 255)}
+PASS 9.0 active
+transparent {'size': (72, 80), 'blue_pixels': 0, 'nontransparent_pixels': 922, 'alpha_range': (0, 115)}
+PASS 10.4 transparent
+PASS 29.0 transparent
+PASS 30.4 hidden
+reactivated {'size': (72, 80), 'blue_pixels': 1085, 'nontransparent_pixels': 1945, 'alpha_range': (0, 255)}
+PASS reactivation

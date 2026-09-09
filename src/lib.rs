@@ -1,8 +1,12 @@
+#![recursion_limit = "256"]
+
 pub mod agent;
 pub mod computer;
 pub mod context;
 pub mod git;
 pub mod mcp;
+pub mod image_content;
+pub mod resources;
 pub mod provider;
 pub mod server;
 pub mod state;

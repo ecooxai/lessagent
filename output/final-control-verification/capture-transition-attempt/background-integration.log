@@ -1,0 +1,5 @@
+Traceback (most recent call last):
+  File "/Users/ecoo/project/agent/lessagent/tests/computer_background.py", line 110, in <module>
+    assert opened.get('automatic_screenshot'),opened
+           ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+AssertionError: {'action': 'browser_open', 'after': {'cursor_x': 909.2734375, 'cursor_y': 206.62109375, 'front_window_id': 8960, 'frontmost_bundle': 'com.google.Chrome', 'frontmost_pid': 68570, 'physical_key_down_count': 8369, 'physical_left_down_count': 3922, 'physical_right_down_count': 46}, 'automatic_screenshot': False, 'before': {'cursor_x': 1051.2578125, 'cursor_y': 325.51953125, 'front_window_id': 8960, 'frontmost_bundle': 'com.google.Chrome', 'frontmost_pid': 68570, 'physical_key_down_count': 8369, 'physical_left_down_count': 3922, 'physical_right_down_count': 46}, 'coordinate_space': 'window', 'delivery': 'chrome-devtools', 'input_events_posted': 0, 'isolated_profile': True, 'mode': 'background', 'ok': True, 'pid': 68840, 'screenshot_error': 'Window capture failed; enable Screen Recording', 'url': 'http://127.0.0.1:62197/', 'window_id': 8988}

@@ -1,0 +1,86 @@
+[
+  {
+    "requested_seconds": 9.0,
+    "pointer": {
+      "fill_alpha": 1,
+      "hide_after_seconds": 30,
+      "idle_seconds": 9.05911712499801,
+      "left_pressed": false,
+      "panel_visible": true,
+      "panel_window_id": 9398,
+      "phase": "active",
+      "pid": 69919,
+      "transparent_after_seconds": 10,
+      "visible": true,
+      "window_id": 9392,
+      "x": 400,
+      "y": 400
+    }
+  },
+  {
+    "requested_seconds": 10.4,
+    "pointer": {
+      "fill_alpha": 0,
+      "hide_after_seconds": 30,
+      "idle_seconds": 10.426952166664705,
+      "left_pressed": false,
+      "panel_visible": true,
+      "panel_window_id": 9398,
+      "phase": "transparent",
+      "pid": 69919,
+      "transparent_after_seconds": 10,
+      "visible": true,
+      "window_id": 9392,
+      "x": 400,
+      "y": 400
+    },
+    "pixels": {
+      "size": [
+        72,
+        80
+      ],
+      "blue_pixels": 0,
+      "nontransparent_pixels": 922,
+      "alpha_range": [
+        0,
+        115
+      ]
+    }
+  },
+  {
+    "requested_seconds": 29.0,
+    "pointer": {
+      "fill_alpha": 0,
+      "hide_after_seconds": 30,
+      "idle_seconds": 29.124865666664846,
+      "left_pressed": false,
+      "panel_visible": true,
+      "panel_window_id": 9398,
+      "phase": "transparent",
+      "pid": 69919,
+      "transparent_after_seconds": 10,
+      "visible": true,
+      "window_id": 9392,
+      "x": 400,
+      "y": 400
+    }
+  },
+  {
+    "requested_seconds": 30.4,
+    "pointer": {
+      "fill_alpha": 0,
+      "hide_after_seconds": 30,
+      "idle_seconds": 30.444299124999816,
+      "left_pressed": false,
+      "panel_visible": false,
+      "panel_window_id": 9398,
+      "phase": "hidden",
+      "pid": 69919,
+      "transparent_after_seconds": 10,
+      "visible": false,
+      "window_id": 9392,
+      "x": 400,
+      "y": 400
+    }
+  }
+]
