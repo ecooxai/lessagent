@@ -557,11 +557,53 @@ footer {
   background: white;
 }
 .logs {
+  display: flex;
+  flex-direction: column;
   font:
-    11px/1.7 ui-monospace,
+    11px/1.6 ui-monospace,
     monospace;
+}
+.log-entry {
+  border-bottom: 1px solid var(--line);
+  padding: 9px 0;
+}
+.log-entry:first-child { padding-top: 2px; }
+.log-head {
+  display: grid;
+  grid-template-columns: 82px 64px minmax(0, 1fr);
+  gap: 10px;
+  align-items: baseline;
+  min-width: 0;
+}
+.log-time,
+.log-kind { color: var(--muted); }
+.log-kind { font-weight: 650; }
+.log-message { overflow-wrap: anywhere; }
+.log-summary { cursor: pointer; }
+.log-summary::marker { color: var(--muted); }
+.log-summary .log-head {
+  display: inline-grid;
+  width: calc(100% - 18px);
+  vertical-align: top;
+}
+.log-preview {
+  display: block;
+  margin: 6px 0 0 18px;
+  color: #405149;
+  font: inherit;
   white-space: pre-wrap;
   overflow-wrap: anywhere;
+}
+.log-full {
+  margin: 9px 0 2px 18px;
+  padding: 10px 12px;
+  border: 1px solid var(--line);
+  border-radius: 7px;
+  background: #f3f6f1;
+  white-space: pre-wrap;
+  overflow-wrap: anywhere;
+  max-height: 50vh;
+  overflow: auto;
 }
 dialog {
   border: 1px solid var(--line);
@@ -678,6 +720,17 @@ aside { width: 192px; padding: 12px 10px; background: #f5f6f3; }
 .sidebar-tools { display: flex; align-items: center; gap: 6px; min-height: 36px; color: var(--muted); }
 .sidebar-tools > span:first-child { margin-right: auto; padding: 6px; font-size: 20px; }
 .sidebar-tools button { border: 0; background: transparent; padding: 5px 8px; font-size: 18px; }
+#logs-nav { transition: background-color .18s ease, color .18s ease, box-shadow .18s ease; }
+#logs-nav.log-activity-new {
+  background: #174f86;
+  color: white;
+  box-shadow: 0 0 0 1px #174f86;
+}
+#logs-nav.log-activity-recent {
+  background: #d9ebfb;
+  color: #174f86;
+  box-shadow: 0 0 0 1px #9fc6e8;
+}
 #workspaces { margin-top: 12px; }
 .workspace { padding: 8px 10px; margin-bottom: 3px; font-size: 13px; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
 .workspace.active { box-shadow: none; }

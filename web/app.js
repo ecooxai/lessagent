@@ -25,8 +25,13 @@ let state = null,
   channel = null,
   voiceWorkspace = null,
   blobUrls = [],
-  noticeTimer;
-let startupAgentOpened = false;
+  noticeTimer,
+  logFreshTimer,
+  logRecentTimer,
+  logResumeTimer;
+let startupAgentOpened = false,
+  lastLogMarker = null,
+  logPauseUntil = 0;
 function uiActive() { return !document.hidden && document.hasFocus(); }
 function surfaceActive(host) { return uiActive() && host.isConnected && !host.closest("[hidden]"); }
 function resumeUi() {
@@ -1071,21 +1076,143 @@ function renderSettings() {
   );
   $("#view").append(root);
 }
-function renderLogs() {
+const LOG_PREVIEW_LIMIT = 500;
+const expandedLogs = new Set();
+function logMarker(log) {
+  return log ? JSON.stringify([log.at, log.kind, log.message]) : "";
+}
+function noteLogActivity(log) {
+  const marker = logMarker(log);
+  if (lastLogMarker === null) {
+    lastLogMarker = marker;
+    return;
+  }
+  if (!marker || marker === lastLogMarker) return;
+  lastLogMarker = marker;
+  const nav = $("#logs-nav");
+  nav.classList.remove("log-activity-recent");
+  nav.classList.add("log-activity-new");
+  clearTimeout(logFreshTimer);
+  clearTimeout(logRecentTimer);
+  logFreshTimer = setTimeout(() => {
+    nav.classList.remove("log-activity-new");
+    nav.classList.add("log-activity-recent");
+  }, 3000);
+  logRecentTimer = setTimeout(() => {
+    nav.classList.remove("log-activity-new", "log-activity-recent");
+  }, 10000);
+}
+function logText(value) {
+  if (typeof value === "string") return value;
+  if (value === undefined) return "";
+  return JSON.stringify(value);
+}
+function clipLogPreview(value, limit = LOG_PREVIEW_LIMIT) {
+  const text = logText(value);
+  return text.length > limit ? text.slice(0, limit) + "…" : text;
+}
+function logToolPreview(log) {
+  const detail = log.details;
+  if (!detail) return "";
+  const tool = detail.tool || "tool";
+  const args = detail.arguments || {};
+  if (tool === "python" && typeof args.code === "string")
+    return `code: ${clipLogPreview(args.code)}`;
+  if (["bash", "shell"].includes(tool) && typeof args.command === "string")
+    return `command: ${clipLogPreview(args.command)}`;
+  const pointerFields = [
+    "action", "x", "y", "to_x", "to_y", "target_x", "target_y",
+    "start", "end", "from", "to", "button", "distance", "delta",
+    "duration", "duration_ms", "screen_width", "screen_height", "window_id", "pid",
+  ];
+  const keyboardFields = ["action", "key", "text", "window_id", "pid"];
+  const commonFields = [
+    "url", "app", "path", "capture_path", "terminal_id", "wait_ms", "offset",
+    "limit", "width", "height", "new_instance", "mode", "show_pointer",
+  ];
+  const wanted = tool === "virtual_pointer"
+    ? pointerFields
+    : tool === "virtual_keyboard"
+      ? keyboardFields
+      : tool === "computer"
+        ? [...pointerFields, ...keyboardFields, ...commonFields]
+        : commonFields;
+  const parts = [];
+  const seen = new Set();
+  for (const field of wanted) {
+    if (seen.has(field) || args[field] === undefined) continue;
+    seen.add(field);
+    parts.push(`${field}=${clipLogPreview(args[field], 120)}`);
+  }
+  if (Array.isArray(args.path)) parts.push(`path_points=${args.path.length}`);
+  if (!parts.length) return clipLogPreview(JSON.stringify(args, null, 2));
+  return parts.join(" · ");
+}
+function logEntryKey(log) {
+  return `${log.at}|${log.kind}|${log.message}`;
+}
+function renderLogEntry(log) {
+  const detail = log.details;
+  const head = el("span", "log-head");
+  head.append(
+    el("time", "log-time", new Date(log.at).toLocaleTimeString()),
+    el("span", "log-kind", log.kind),
+    el("span", "log-message", log.message),
+  );
+  if (!detail) {
+    const row = el("div", "log-entry log-entry-static");
+    row.append(head);
+    return row;
+  }
+  const key = logEntryKey(log);
+  const row = el("details", "log-entry");
+  const summary = el("summary", "log-summary");
+  summary.append(head);
+  const preview = logToolPreview(log);
+  if (preview) summary.append(el("code", "log-preview", preview));
+  row.append(summary, el("pre", "log-full", JSON.stringify(detail, null, 2)));
+  row.open = expandedLogs.has(key);
+  row.addEventListener("toggle", () => {
+    if (row.open) expandedLogs.add(key);
+    else expandedLogs.delete(key);
+  });
+  return row;
+}
+function renderLogs(force = false) {
   const v = $("#view");
   let logs = v.querySelector(".logs");
+  if (logs && !force && Date.now() < logPauseUntil) return;
   if (!logs) {
-    v.replaceChildren(toolbar("Backend logs", button("Refresh", poll)));
-    logs = el("pre", "logs");
+    v.replaceChildren(toolbar("Backend logs", button("Refresh", async () => {
+      logPauseUntil = 0;
+      await poll();
+      renderLogs(true);
+    })));
+    logs = el("div", "logs");
     v.append(logs);
   }
-  logs.textContent =
-    state.logs
-      .map(
-        (l) =>
-          `${new Date(l.at).toLocaleTimeString()}  ${l.kind.padEnd(8)} ${l.message}`,
-      )
-      .join("\n") || "No backend events yet.";
+  const entries = state.logs || [];
+  const latest = entries.at(-1);
+  const stamp = JSON.stringify([entries.length, latest?.at, latest?.kind, latest?.message, latest?.details]);
+  if (!force && logs.dataset.stamp === stamp) return;
+  const oldHeight = v.scrollHeight, oldTop = v.scrollTop;
+  logs.replaceChildren(...(entries.length
+    ? entries.slice().reverse().map(renderLogEntry)
+    : [el("p", "muted", "No backend events yet.")]));
+  logs.dataset.stamp = stamp;
+  if (oldTop > 0 && v.scrollHeight > oldHeight)
+    v.scrollTop = oldTop + (v.scrollHeight - oldHeight);
+}
+function pauseLogUpdates() {
+  const active = ui().tabs.find(tab => tab.id === ui().active);
+  if (active?.kind !== "logs") return;
+  logPauseUntil = Date.now() + 2000;
+  clearTimeout(logResumeTimer);
+  logResumeTimer = setTimeout(() => {
+    logPauseUntil = 0;
+    const current = ui().tabs.find(tab => tab.id === ui().active);
+    if (current?.kind === "logs") renderLogs(true);
+  }, 2000);
 }
 function renderFiles() {
   if ($("#view .file-browser")) return;
@@ -1332,6 +1459,8 @@ async function poll() {
   try {
     const terminalView = state && ["terminals", "managed"].includes(ui().tabs.find(t=>t.id===ui().active)?.kind);
     const incoming = await api("/api/state?summary=true" + (terminalView ? "&terminal=true" : ""));
+    if (typeof noteLogActivity === "function")
+      noteLogActivity(incoming.latest_log || incoming.logs?.at(-1));
     if (incoming.partial) {
       incoming.workspaces = incoming.workspaces.map(w=>({...state.workspaces.find(old=>old.id===w.id),...w}));
       state = retainLocalTabs({...state,...incoming});
@@ -1368,7 +1497,8 @@ $("#add-workspace").onclick = guard(async () => {
   document.body.append(dialog); dialog.showModal();
 });
 $("#settings-nav").onclick = guard(() => openTab("settings", "Settings"));
-$("#logs-nav").onclick = guard(() => openTab("logs", "Logs"));
+$("#logs-nav").onclick = guard(async () => { await openTab("logs", "Logs"); await poll(); });
+$("#view").addEventListener("scroll", pauseLogUpdates, {passive:true});
 async function newWebview() {
   const value = await ask("New webview", "Website URL", "https://");
   if (!value) return;

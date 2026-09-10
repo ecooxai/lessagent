@@ -22,6 +22,7 @@ Expected: — / —</div><div id="manual"><input id="expected-x" type="number" v
 document.title += ' ' + location.port;
 document.querySelector('#scrollbox').className='scrollbox';
 const canvas=document.querySelector('#canvas'),ctx=canvas.getContext('2d'),guide=document.querySelector('#guide'),g=guide.getContext('2d'),nameInput=document.querySelector('#name');
+const profileKey='lessagent-managed-profile-reuse-test';nameInput.value=localStorage.getItem(profileKey)||'';nameInput.addEventListener('input',()=>localStorage.setItem(profileKey,nameInput.value));
 let drawing=false,sequence=0,clicks=0,strokes=0,plan={id:0,points:[]},lastPlan=-1;
 const emit=p=>fetch('/event',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({seq:++sequence,...p})}).catch(()=>{});
 function expectedPoint(x,y){
@@ -62,10 +63,10 @@ canvas.onpointermove=e=>{if(!drawing)return;for(const sample of e.getCoalescedEv
 canvas.onpointerup=e=>{if(e.button!==0)return;drawing=false;strokes++;emit({type:'stroke-complete',strokes});document.querySelector('#status').textContent=strokes+' complete strokes';};
 canvas.onpointercancel=()=>{drawing=false;};canvas.oncontextmenu=e=>e.preventDefault();
 document.querySelector('#click-test').onclick=()=>{clicks++;document.querySelector('#click-test').textContent='Click test · '+clicks;emit({type:'button-click',clicks});};
-document.querySelector('#clear').onclick=()=>{ctx.clearRect(0,0,1000,600);nameInput.value='';emit({type:'clear'});};
+document.querySelector('#clear').onclick=()=>{ctx.clearRect(0,0,1000,600);nameInput.value='';localStorage.removeItem(profileKey);emit({type:'clear'});};
 window.addEventListener('wheel',e=>{record(e);emit({type:'wheel-detail',x:e.clientX,y:e.clientY,delta:e.deltaY,target:e.target.closest('.scrollbox')?.id||e.target.id,meta:e.metaKey,ctrl:e.ctrlKey,trusted:e.isTrusted,focused:document.hasFocus(),planId:plan.id});},{passive:true});
 for(const id of ['scrollbox','scrollbox2'])document.getElementById(id).onscroll=e=>emit({type:'scrolled',target:id,top:e.target.scrollTop});
-function ready(){const geometry={};for(const id of ['name','click-test','clear','range','canvas','scrollbox','scrollbox2']){const r=document.getElementById(id).getBoundingClientRect();geometry[id]={x:r.x,y:r.y,width:r.width,height:r.height};}emit({type:'ready',geometry,innerWidth,innerHeight,outerWidth,outerHeight,devicePixelRatio});}
+function ready(){const geometry={};for(const id of ['name','click-test','clear','range','canvas','scrollbox','scrollbox2']){const r=document.getElementById(id).getBoundingClientRect();geometry[id]={x:r.x,y:r.y,width:r.width,height:r.height};}emit({type:'ready',geometry,innerWidth,innerHeight,outerWidth,outerHeight,devicePixelRatio,profileValue:nameInput.value});}
 function showPlan(value){plan=value;g.clearRect(0,0,1000,600);const r=canvas.getBoundingClientRect();if(plan.points?.length){g.strokeStyle='#82a9c0';g.lineWidth=1.5;g.setLineDash([5,5]);g.beginPath();plan.points.forEach((p,i)=>i?g.lineTo(p[0]-r.x,p[1]-r.y):g.moveTo(p[0]-r.x,p[1]-r.y));g.stroke();g.setLineDash([]);for(const p of plan.points){const x=p[0]-r.x,y=p[1]-r.y;g.beginPath();g.arc(x,y,9,0,2*Math.PI);g.moveTo(x-15,y);g.lineTo(x+15,y);g.moveTo(x,y-15);g.lineTo(x,y+15);g.stroke();}}emit({type:'plan-ready',planId:plan.id});}
 document.querySelector('#set-expected').onclick=()=>showPlan({id:Date.now(),points:[[Number(document.querySelector('#expected-x').value),Number(document.querySelector('#expected-y').value)]]});
 async function pollPlan(){try{const response=await fetch('/plan',{cache:'no-store'});if(!response.headers.get('Content-Type')?.includes('application/json'))return;const value=await response.json();if(value.id!==lastPlan){lastPlan=value.id;showPlan(value);}}catch{}}

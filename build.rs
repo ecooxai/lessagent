@@ -2,6 +2,7 @@ fn main() {
     println!("cargo:rerun-if-changed=native/computer.swift");
     println!("cargo:rerun-if-changed=native/browser.swift");
     println!("cargo:rerun-if-changed=native/system.swift");
+    println!("cargo:rerun-if-changed=native/window.swift");
     if std::env::var("CARGO_CFG_TARGET_OS").as_deref() == Ok("macos") {
         let output = std::path::PathBuf::from(std::env::var_os("OUT_DIR").unwrap())
             .join("lessagent-computer");
@@ -25,6 +26,7 @@ fn main() {
             .arg(main)
             .arg("native/browser.swift")
             .arg("native/system.swift")
+            .arg("native/window.swift")
             .arg("-o")
             .arg(output)
             .status()

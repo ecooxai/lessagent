@@ -1384,7 +1384,10 @@ async fn run(
                 call.arguments["command"] =
                     json!(format!("export LESSAGENT_OUTPUT_DIR='{dir}'\n{command}"));
             }
-            if call.name == "computer" && call.arguments["action"] != "windows" {
+            if crate::tools::is_computer_tool(&call.name)
+                && call.name != "list_windows"
+                && call.arguments["action"] != "windows"
+            {
                 // Keep screenshots produced by native tool calls in the same
                 // user-visible artifact tree as Light-mode captures.
                 call.arguments["capture_path"] = json!(format!(
@@ -1470,7 +1473,7 @@ async fn run(
                         .into(),
                     data: data.into(),
                 };
-                if call.name == "computer" {
+                if crate::tools::is_computer_tool(&call.name) {
                     latest_computer_image = Some(image.clone());
                 }
                 screenshots = vec![image];

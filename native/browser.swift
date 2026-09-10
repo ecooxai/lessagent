@@ -89,6 +89,51 @@ func managedBrowser(_ args: [String: Any], id: Int, pid: Int32) throws -> Manage
     guard record.windowID == id, record.pid == pid else { throw Failure("Browser target record mismatch") }
     return record
 }
+func browserEndpoint(_ profile: URL) -> String? {
+    let portFile = profile.appendingPathComponent("DevToolsActivePort")
+    guard let text = try? String(contentsOf: portFile, encoding: .utf8) else { return nil }
+    let lines = text.split(separator: "\n")
+    guard lines.count >= 2, let port = Int(lines[0]), (1...65535).contains(port),
+          lines[1].hasPrefix("/devtools/browser/") else { return nil }
+    return "ws://127.0.0.1:\(port)\(lines[1])"
+}
+func managedBrowserPID(_ connection: BrowserConnection) throws -> Int32 {
+    let processInfo = try connection.call("SystemInfo.getProcessInfo")
+    guard let processes = processInfo["processInfo"] as? [[String: Any]],
+          let browser = processes.first(where: { $0["type"] as? String == "browser" }),
+          let number = browser["id"] as? NSNumber else { throw Failure("Cannot verify the managed browser process") }
+    return number.int32Value
+}
+func connectManagedBrowser(_ profile: URL) -> (BrowserConnection, String, Int32)? {
+    guard let endpoint = browserEndpoint(profile), let connection = try? BrowserConnection(endpoint),
+          let pid = try? managedBrowserPID(connection) else { return nil }
+    return (connection, endpoint, pid)
+}
+func persistentBrowserProfile(_ root: URL) -> (URL, Bool) {
+    let stable = root.appendingPathComponent("profile", isDirectory: true)
+    if FileManager.default.fileExists(atPath: stable.path) { return (stable, true) }
+    // Upgrade from the old per-window profile layout by adopting the most
+    // recently active/modified managed profile rather than throwing its state
+    // away and creating another blank profile.
+    let keys: Set<URLResourceKey> = [.isDirectoryKey, .contentModificationDateKey]
+    let candidates = ((try? FileManager.default.contentsOfDirectory(at: root, includingPropertiesForKeys: Array(keys), options: [.skipsHiddenFiles])) ?? [])
+        .filter { url in
+            guard url.lastPathComponent.hasPrefix("profile-") else { return false }
+            return (try? url.resourceValues(forKeys: keys).isDirectory) == true
+        }
+    if let live = candidates.filter({ connectManagedBrowser($0) != nil }).max(by: { lhs, rhs in
+        let l = (try? lhs.resourceValues(forKeys: keys).contentModificationDate) ?? .distantPast
+        let r = (try? rhs.resourceValues(forKeys: keys).contentModificationDate) ?? .distantPast
+        return l < r
+    }) { return (live, true) }
+    if let recent = candidates.max(by: { lhs, rhs in
+        let l = (try? lhs.resourceValues(forKeys: keys).contentModificationDate) ?? .distantPast
+        let r = (try? rhs.resourceValues(forKeys: keys).contentModificationDate) ?? .distantPast
+        return l < r
+    }) { return (recent, true) }
+    return (stable, false)
+}
+
 func openManagedBrowser(_ args: [String: Any]) throws -> [String: Any] {
     guard let text = args["url"] as? String, let url = URL(string: text),
           ["http", "https"].contains(url.scheme ?? ""), url.host != nil,
@@ -115,43 +160,63 @@ func openManagedBrowser(_ args: [String: Any]) throws -> [String: Any] {
     let top = Int(frame.maxY - visible.maxY + (visible.height - Double(height)) / 2)
     let root = try browserRoot(args)
     try FileManager.default.createDirectory(at: root, withIntermediateDirectories: true, attributes: [.posixPermissions: 0o700])
-    let profile = root.appendingPathComponent("profile-" + UUID().uuidString, isDirectory: true)
-    try FileManager.default.createDirectory(at: profile, withIntermediateDirectories: false, attributes: [.posixPermissions: 0o700])
-    let before = state()
-    let launch = Process()
-    launch.executableURL = URL(fileURLWithPath: "/usr/bin/open")
-    launch.arguments = ["-g", "-n", "-a", "Google Chrome", "--args", "--user-data-dir=" + profile.path,
-        "--remote-debugging-address=127.0.0.1", "--remote-debugging-port=0", "--no-startup-window",
-        "--no-first-run", "--no-default-browser-check", "--disable-background-networking",
-        "--disable-background-timer-throttling", "--disable-backgrounding-occluded-windows", "--disable-renderer-backgrounding"]
-    try launch.run(); launch.waitUntilExit()
-    guard launch.terminationStatus == 0 else { throw Failure("Unable to start a separate background Chrome profile") }
-    let portFile = profile.appendingPathComponent("DevToolsActivePort")
-    var endpoint: String?
-    for _ in 0..<150 {
-        if let text = try? String(contentsOf: portFile, encoding: .utf8) {
-            let lines = text.split(separator: "\n")
-            if lines.count >= 2, let port = Int(lines[0]), (1...65535).contains(port), lines[1].hasPrefix("/devtools/browser/") {
-                endpoint = "ws://127.0.0.1:\(port)\(lines[1])"; break
-            }
-        }
-        RunLoop.current.run(until: Date(timeIntervalSinceNow: 0.1))
+    // Reuse one Lessagent-managed user-data directory so cookies, storage and
+    // sign-in state survive browser_open calls. It remains separate from the
+    // user's normal Chrome data directory, which is never debug-enabled.
+    let (profile, profileReused) = persistentBrowserProfile(root)
+    if !profileReused {
+        try FileManager.default.createDirectory(at: profile, withIntermediateDirectories: false, attributes: [.posixPermissions: 0o700])
     }
-    guard let endpoint = endpoint else { throw Failure("Separate Chrome did not expose its loopback control endpoint; the normal browser was not modified") }
-    let connection = try BrowserConnection(endpoint)
-    let processInfo = try connection.call("SystemInfo.getProcessInfo")
-    guard let processes = processInfo["processInfo"] as? [[String: Any]],
-          let browser = processes.first(where: { $0["type"] as? String == "browser" }),
-          let number = browser["id"] as? NSNumber else { throw Failure("Cannot verify the managed browser process") }
-    let pid = number.int32Value
+    let before = state()
+    let connection: BrowserConnection
+    let endpoint: String
+    let pid: Int32
+    let browserProcessReused: Bool
+    if let existing = connectManagedBrowser(profile) {
+        (connection, endpoint, pid) = existing
+        browserProcessReused = true
+    } else {
+        // A stale DevToolsActivePort from an unclean exit must not be mistaken
+        // for a live browser. Chrome recreates it after launch.
+        try? FileManager.default.removeItem(at: profile.appendingPathComponent("DevToolsActivePort"))
+        let launch = Process()
+        launch.executableURL = URL(fileURLWithPath: "/usr/bin/open")
+        launch.arguments = ["-g", "-n", "-a", "Google Chrome", "--args", "--user-data-dir=" + profile.path,
+            "--remote-debugging-address=127.0.0.1", "--remote-debugging-port=0", "--no-startup-window",
+            "--no-first-run", "--no-default-browser-check", "--disable-background-networking",
+            "--disable-background-timer-throttling", "--disable-backgrounding-occluded-windows", "--disable-renderer-backgrounding"]
+        try launch.run(); launch.waitUntilExit()
+        guard launch.terminationStatus == 0 else { throw Failure("Unable to start the managed background Chrome profile") }
+        var connected: (BrowserConnection, String, Int32)?
+        for _ in 0..<150 {
+            if let value = connectManagedBrowser(profile) { connected = value; break }
+            RunLoop.current.run(until: Date(timeIntervalSinceNow: 0.1))
+        }
+        guard let connected = connected else { throw Failure("Managed Chrome did not expose its loopback control endpoint; the normal browser was not modified") }
+        (connection, endpoint, pid) = connected
+        browserProcessReused = false
+    }
+    // The persistent profile may already own other managed windows. Snapshot
+    // exact WindowServer IDs so the newly created CDP window can be identified
+    // without assuming one Chrome process equals one window.
+    let existingWindowIDs = Set(windows().compactMap { window -> Int? in
+        guard (window["pid"] as? Int32) == pid else { return nil }
+        return window["window_id"] as? Int
+    })
     var succeeded = false
-    defer { if !succeeded { _ = try? connection.call("Browser.close") } }
+    var createdTargetID: String?
+    defer {
+        if !succeeded, let targetID = createdTargetID {
+            _ = try? connection.call("Target.closeTarget", ["targetId": targetID])
+        }
+    }
     let created = try connection.call("Target.createTarget", ["url": url.absoluteString, "newWindow": true, "background": true, "width": width, "height": height])
     guard let targetID = created["targetId"] as? String else { throw Failure("Chrome did not create the requested background page") }
+    createdTargetID = targetID
     let targetWindow = try connection.call("Browser.getWindowForTarget", ["targetId": targetID])
     guard let browserWindowID = targetWindow["windowId"] as? Int else { throw Failure("Chrome did not identify its new window") }
     // Chrome may choose another display or restore old bounds; set and verify
-    // only this new isolated window, without activation or OS pointer events.
+    // only this new managed window, without activation or OS pointer events.
     try connection.call("Browser.setWindowBounds", ["windowId": browserWindowID,
         "bounds": ["left": left, "top": top, "width": width, "height": height, "windowState": "normal"]])
     var fitted = false
@@ -166,11 +231,26 @@ func openManagedBrowser(_ args: [String: Any]) throws -> [String: Any] {
     guard fitted else { throw Failure("Chrome could not fit the new window to the current display work area; the isolated browser was closed") }
     var target: [String: Any]?
     for _ in 0..<100 {
-        let candidates = windows().filter { ($0["pid"] as? Int32) == pid && ($0["onscreen"] as? Bool == true) }
+        let candidates = windows().filter {
+            ($0["pid"] as? Int32) == pid && ($0["onscreen"] as? Bool == true) &&
+            !existingWindowIDs.contains($0["window_id"] as? Int ?? 0)
+        }
         if candidates.count == 1 { target = candidates[0]; break }
+        if candidates.count > 1 {
+            let matched = candidates.filter { candidate in
+                let geometry = (try? nativeWindowGeometry(candidate, required: false)) ?? candidate
+                guard let x = (geometry["x"] as? NSNumber)?.doubleValue,
+                      let y = (geometry["y"] as? NSNumber)?.doubleValue,
+                      let w = (geometry["width"] as? NSNumber)?.doubleValue,
+                      let h = (geometry["height"] as? NSNumber)?.doubleValue else { return false }
+                return abs(x - Double(left)) <= 3 && abs(y - Double(top)) <= 3 &&
+                       abs(w - Double(width)) <= 3 && abs(h - Double(height)) <= 3
+            }
+            if matched.count == 1 { target = matched[0]; break }
+        }
         RunLoop.current.run(until: Date(timeIntervalSinceNow: 0.05))
     }
-    guard let target = target, let id = target["window_id"] as? Int else { throw Failure("Cannot uniquely identify an onscreen managed Chrome window for PID \(pid); no input was sent") }
+    guard let target = target, let id = target["window_id"] as? Int else { throw Failure("Cannot uniquely identify the newly created managed Chrome window for PID \(pid); no input was sent") }
     let record = ManagedBrowser(windowID: id, pid: pid, endpoint: endpoint, targetID: targetID, browserWindowID: browserWindowID, profile: profile.path)
     let file = browserRecordURL(root, id, pid)
     try JSONEncoder().encode(record).write(to: file, options: .atomic)
@@ -178,6 +258,7 @@ func openManagedBrowser(_ args: [String: Any]) throws -> [String: Any] {
     succeeded = true
     return ["ok": true, "action": "browser_open", "mode": "background", "window_id": id, "pid": pid,
         "url": url.absoluteString, "delivery": "chrome-devtools", "isolated_profile": true,
+        "persistent_profile": true, "profile_reused": profileReused, "browser_process_reused": browserProcessReused,
         "before": before, "after": state(), "coordinate_space": "window", "input_events_posted": 0,
         "browser_size": ["requested_width": requestedWidth, "requested_height": requestedHeight,
                          "width": width, "height": height, "maximum_width": maxWidth, "maximum_height": maxHeight,
@@ -311,15 +392,24 @@ func browserControl(_ args: [String: Any], record: ManagedBrowser, window: [Stri
                 }
             }
         }
+        if action == "drag" {
+            // The renderer can still be draining the final high-rate pen move
+            // when the CDP command itself has already been acknowledged. Give
+            // that final move one frame to settle before releasing so the
+            // recipient reliably observes pointerup/stroke completion. This is
+            // only a timing settle; the press/moves/release are still sent once.
+            RunLoop.current.run(until: Date(timeIntervalSinceNow: 0.02))
+        }
         try mouse("mouseReleased", last); released = true
     case "type":
         _ = try call("Input.insertText", ["text": args["text"] as? String ?? ""]); events += 1; pointer(nil)
     case "key":
         guard let (name, nativeCode, flags) = recipe else { throw Failure("Missing validated key recipe") }
         let named: [String: (String, Int)] = ["enter":("Enter",13),"return":("Enter",13),"tab":("Tab",9),"space":(" ",32),"backspace":("Backspace",8),"escape":("Escape",27),"esc":("Escape",27),"delete":("Delete",46),"home":("Home",36),"end":("End",35),"pageup":("PageUp",33),"pagedown":("PageDown",34),"left":("ArrowLeft",37),"right":("ArrowRight",39),"up":("ArrowUp",38),"down":("ArrowDown",40)]
-        let key = named[name]?.0 ?? (flags.contains(.maskShift) ? name.uppercased() : name)
+        let function = name.hasPrefix("f") ? Int(name.dropFirst()).flatMap { (1...20).contains($0) ? $0 : nil } : nil
+        let key = function.map { "F\($0)" } ?? named[name]?.0 ?? (flags.contains(.maskShift) ? name.uppercased() : name)
         let code = name.count == 1 ? (name.first!.isNumber ? "Digit" : "Key")+name.uppercased() : (name == "space" ? "Space" : key)
-        let vk = named[name]?.1 ?? Int(name.uppercased().utf8.first ?? 0)
+        let vk = function.map { 111 + $0 } ?? named[name]?.1 ?? Int(name.uppercased().utf8.first ?? 0)
         let mods = (flags.contains(.maskAlternate) ? 1 : 0) | (flags.contains(.maskControl) ? 2 : 0) | (flags.contains(.maskCommand) ? 4 : 0) | (flags.contains(.maskShift) ? 8 : 0)
         var down: [String: Any] = ["type":"rawKeyDown","key":key,"code":code,"windowsVirtualKeyCode":vk,"nativeVirtualKeyCode":nativeCode,"modifiers":mods]
         if flags.contains(.maskCommand), name == "a" { down["commands"] = ["selectAll"] }

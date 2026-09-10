@@ -91,9 +91,11 @@ async def exercise(root):
                 primary = next(display for display in host['displays'] if display['primary'])
                 maxw, maxh = primary['logical_width'], primary['logical_height']
                 definitions = {tool.name: tool for tool in (await client.list_tools()).tools}
-                for name in ['browser_open', 'computer']:
-                    fields = definitions[name].inputSchema['properties']
-                    assert fields['width']['maximum'] == maxw and fields['height']['maximum'] == maxh
+                assert 'computer' not in definitions
+                fields = definitions['browser_open'].inputSchema['properties']
+                assert fields['width']['maximum'] == maxw and fields['height']['maximum'] == maxh
+                assert '?purpose=texttodescribepurposeofthiswindow_by_modelname' in fields['url']['description']
+                assert 'existing persistent managed profile by default' in definitions['browser_open'].description
                 REPORT.mkdir(parents=True, exist_ok=True)
                 (REPORT / 'instruction-sample.md').write_text(first.text)
                 (REPORT / 'system-info.json').write_text(json.dumps(host, indent=2))
@@ -107,17 +109,23 @@ async def exercise(root):
                 async def call(name, **args):
                     return await client.call_tool(name, {'workspace': workspace, 'summary': f'Verify {name} sizing and screenshot metadata on the local fixture.', **args})
                 url = f'http://127.0.0.1:{page.server_port}/'
-                for name in ['browser_open', 'computer']:
-                    action = {'action': 'browser_open'} if name == 'computer' else {}
-                    for size in [dict(width=maxw+1), dict(height=maxh+1), dict(width=639), dict(height=479),
-                                 dict(width=True), dict(height=600.5), dict(width=-1), dict(width=2**63)]:
-                        rejected = await call(name, url=url, **action, **size)
-                        assert rejected.isError, (name, size, rejected)
-                assert not list((data / 'browsers').glob('profile-*')), 'Invalid sizes created a browser profile'
-                check('both browser entrypoints reject 16 invalid/stale sizes before creating profiles or windows')
-                for label, name, sizes in [('default', 'browser_open', {}), ('maximum', 'computer', {'action': 'browser_open', 'width': maxw, 'height': maxh})]:
+                for size in [dict(width=maxw+1), dict(height=maxh+1), dict(width=639), dict(height=479),
+                             dict(width=True), dict(height=600.5), dict(width=-1), dict(width=2**63)]:
+                    rejected = await call('browser_open', url=url, **size)
+                    assert rejected.isError, (size, rejected)
+                assert not list((data / 'browsers').glob('profile*')), 'Invalid sizes created a browser profile'
+                check('standalone browser_open rejects 8 invalid/stale sizes before creating profiles or windows')
+                first_managed = None
+                for label, name, sizes in [('default', 'browser_open', {}), ('maximum', 'browser_open', {'width': maxw, 'height': maxh})]:
                     result = await call(name, url=url, **sizes)
                     value = payload(result); pids.add(value['pid'])
+                    assert value['isolated_profile'] and value['persistent_profile'], value
+                    if first_managed is None:
+                        assert not value['profile_reused'] and not value['browser_process_reused'], value
+                        first_managed = (value['pid'], value['window_id'])
+                    else:
+                        assert value['profile_reused'] and value['browser_process_reused'], value
+                        assert value['pid'] == first_managed[0] and value['window_id'] != first_managed[1], value
                     width, height = image_geometry(result)
                     size = value['browser_size']
                     requested = (min(1000, maxw), min(600, maxh)) if label == 'default' else (maxw, maxh)
@@ -131,9 +139,9 @@ async def exercise(root):
                     shutil.copy2(value['path'], REPORT / (label + '.png'))
                     report[label] = {'browser_size': size, 'image_width': width, 'image_height': height}
                     target = {'window_id': value['window_id'], 'pid': value['pid']}
-                    shot = await call('computer', action='screenshot', **target)
+                    shot = await call('get_screenshot', **target)
                     image_geometry(shot)
-                    api_shot = api('/api/action/tool', {'workspace': workspace, 'name': 'computer', 'arguments': {'action': 'screenshot', **target}})
+                    api_shot = api('/api/action/tool', {'workspace': workspace, 'name': 'get_screenshot', 'arguments': target})
                     assert 'image' not in api_shot
                     actual = struct.unpack('>II', Path(api_shot['path']).read_bytes()[16:24])
                     assert (api_shot['width'], api_shot['height']) == actual
@@ -142,6 +150,7 @@ async def exercise(root):
                     read_value = payload(reread)
                     assert (read_value['width'], read_value['height']) == (width, height)
                     check(f'{label}: fitted browser size, output/ screenshots, encoded dimensions and metadata across MCP/API/file reads')
+                check('second browser_open reused the persistent managed profile/process and created a distinct Chrome window')
                 report['passed'] = True
     finally:
         # Only the disposable Chrome processes launched by this test are stopped.

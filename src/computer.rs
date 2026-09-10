@@ -244,7 +244,10 @@ fn macos_background_route(args: &Value) -> Result<bool> {
             "macOS permits background window control only; desktop/system-pointer input is disabled and never used as a fallback",
         ));
     }
-    if args["action"] == "windows" || args["action"] == "browser_open" {
+    if matches!(
+        args["action"].as_str(),
+        Some("windows" | "browser_open" | "app_open")
+    ) {
         return Ok(true);
     }
     if args.get("window_id").is_some() || args.get("pid").is_some() || args["mode"] == "background"
@@ -271,6 +274,7 @@ fn validate_common_args(args: &Value) -> Result<()> {
             "windows"
                 | "screenshot"
                 | "browser_open"
+                | "app_open"
                 | "move"
                 | "click"
                 | "drag"
@@ -280,6 +284,25 @@ fn validate_common_args(args: &Value) -> Result<()> {
         )
     ) {
         return Err(err("Unknown or missing computer action"));
+    }
+    if args["action"] == "app_open" {
+        if args["app"]
+            .as_str()
+            .filter(|s| !s.trim().is_empty())
+            .is_none()
+        {
+            return Err(err(
+                "app_open requires an installed application name, bundle ID or .app path",
+            ));
+        }
+        if args.get("new_instance").is_some_and(|v| !v.is_boolean()) {
+            return Err(err("new_instance must be a boolean"));
+        }
+        for field in ["window_id", "pid", "x", "y", "key", "text", "path"] {
+            if args.get(field).is_some() {
+                return Err(err("app_open cannot accept target/input fields"));
+            }
+        }
     }
     if args["action"] == "browser_open" {
         let url = args["url"]
@@ -378,7 +401,10 @@ fn validate_common_args(args: &Value) -> Result<()> {
 #[cfg(any(target_os = "macos", test))]
 fn normalize_background_args(args: &Value) -> Result<Value> {
     validate_common_args(args)?;
-    if args["action"] == "windows" || args["action"] == "browser_open" {
+    if matches!(
+        args["action"].as_str(),
+        Some("windows" | "browser_open" | "app_open")
+    ) {
         return Ok(args.clone());
     }
     if args["mode"] == "desktop" {

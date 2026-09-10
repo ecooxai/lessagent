@@ -82,7 +82,7 @@ uv run --with 'mcp>=1.20,<2' tests/mcp_client.py target/debug/lessagent
 node --check web/app.js
 ```
 
-The Python integration harnesses above choose isolated ports/data directories. `tests/mcp_client.py` covers HTTP and stdio with the real MCP SDK, all tool schemas, invalid summaries, preserved file/image/PTY results, read-first guidance, and agent run/status against a deterministic local provider fixture. It does not need real model credentials or make paid model calls. The smoke harness also uses a local fixture.
+The Python integration harnesses above choose isolated ports/data directories. `tests/mcp_client.py` covers HTTP and stdio with the real MCP SDK, all public tool schemas, invalid summaries, preserved file/image/PTY results, read-first guidance, removed-tool rejection, and resource behavior. It does not need real model credentials or make paid model calls. The smoke harness uses its own local provider fixture.
 
 JavaScript regression scripts in `tests/*.cjs` need a `jsdom` version with pointer-event handler support. This isolated setup was tested with Node 22.23.1 and `jsdom` 30.0.0; an older `jsdom` 26 environment cannot dispatch the thinking-menu test's `onpointerdown` handler. Install test dependencies outside the checkout so no project manifest or lockfile is changed:
 
@@ -98,16 +98,20 @@ For computer-control changes, also run:
 
 ```sh
 uv run --with 'mcp>=1.20,<2' tests/browser_geometry.py target/debug/lessagent
+uv run --with 'mcp>=1.20,<2' tests/browser_profile_virtual_tools.py target/debug/lessagent
 uv run --with 'mcp>=1.20,<2' --with pillow tests/computer_background.py target/debug/lessagent
+uv run --with 'mcp>=1.20,<2' --with pillow tests/native_app_virtual_tools.py target/debug/lessagent
 ```
 
-These native integration tests need Chrome plus macOS Accessibility and Screen Recording permissions. Keep the shared pointer and user's normal browser/profile untouched. Missing permissions or unavailable dependencies must be reported as blockers, not passes. Do not weaken assertions or use placeholder verification. Report exact commands, results, and any untested behavior; retain useful failure evidence separately from source.
+These native integration tests need Chrome plus macOS Accessibility and Screen Recording permissions. Keep the shared pointer and user's normal browser/profile untouched; browser_open may reuse only the persistent Lessagent-managed profile. Missing permissions or unavailable dependencies must be reported as blockers, not passes. Do not weaken assertions or use placeholder verification. Report exact commands, results, and any untested behavior; retain useful failure evidence separately from source.
 
 ## MCP contract
 
 Read the server resource `lessagent://server/instruction.md` through standard MCP `resources/list` / `resources/read`, or the read-only `list_resources` / `read_resource` tools for tool-only clients. These bootstrap operations do not require a workspace or computer control enabled. The resource includes freshly read OS, CPU, GPU, RAM, all macOS displays (logical/backing-pixel/visible sizes), and workflow rules. It excludes credentials, serial numbers, user/host names and window contents. Refresh it and `tools/list` after display changes. Native resource operations do not take summary; the two tool bridges do.
 
-Use `browser_open` (not `open_browser`) for an isolated background Chrome window. Default dimensions are 1000 by 600 logical points, reduced to fit smaller displays. Schema maxima follow the current primary display's logical resolution; runtime and native launch validate again. The actual window is centered/fitted to the visible work area, never enlarged to Retina pixel dimensions. Both the browser tool and computer action share this rule. Inspect returned `browser_size` and actual screenshot dimensions rather than assuming the requested size.
+Use `browser_open` (not `open_browser`) for a new background Chrome window backed by the existing persistent Lessagent-managed profile by default; create a managed profile only when none exists. Put a short model-authored purpose in the URL using `?purpose=texttodescribepurposeofthiswindow_by_modelname`, or append `&purpose=...` to an existing query string, URL-encoding the value. Default dimensions are 1000 by 600 logical points, reduced to fit smaller displays. Schema maxima follow the current primary display's logical resolution; runtime and native launch validate again. The actual window is centered/fitted to the visible work area, never enlarged to Retina pixel dimensions. The standalone `browser_open` tool enforces this rule. Inspect returned `browser_size` and actual screenshot dimensions rather than assuming the requested size.
+
+Use standalone `list_windows`, `get_screenshot`, `virtual_pointer`, and `virtual_keyboard` for MCP GUI work; the aggregate `computer` MCP tool is removed. MCP also does not expose `agent_run` or `agent_status`; the MCP client is already the orchestrating agent and should use the project primitives directly. `app_open` opens a native app without requesting focus, with Blender's `--no-window-focus` flag; `new_instance:false` reuses one unambiguous window. Native events use exact Cocoa window IDs and AX geometry with no synthetic activation/responder lease. Ordinary left-clicks on actionable Accessibility controls use exact-window `AXPress` when available; canvas/viewport clicks and other pointer actions retain the recipient-local process event path, and one user action is never double-sent. Verify both foreground PID and target window presentation: Stage Manager can expand a window without changing foreground PID. Native captures may be explicitly marked, perspective-corrected low-resolution thumbnails. Never claim full-resolution capture from dimensions alone or treat successful posting as proof an app accepted input. Unsupported application behavior does not justify global input or activation fallbacks. See `docs/background-control.md`.
 
 Image outputs carry byte-verified `width`, `height`, `format`, and `image_metadata`; screenshots also retain `screen_width` / `screen_height`. MCP image blocks expose `_meta["lessagent/image"]` and compatibility dimension aliases. Pass actual screenshot dimensions with pixel coordinates. A client-specific `fovea` or inspector field is not a standard MCP requirement and may still be omitted by its adapter. No fictitious crop is emitted.
 
@@ -115,13 +119,13 @@ Direct screenshots now default to project `output/computer/`. Preserve internal 
 
 Initialization, tool descriptions, and successful workspace open/list responses instruct clients to read workspace-root `Agents.md` first with `read_file`. Try `AGENTS.md` when the first spelling is absent; if neither exists, report that and proceed. Follow `has_more` / `next_offset` until guidance is fully read. This is client workflow guidance, not a server-side assertion that a client actually read or obeyed the file.
 
-Every MCP tool, including `workspace_open`, `workspace_list`, `agent_run`, and `agent_status`, requires a `summary` string: a concise, nonblank paragraph describing the specific call's intended action and purpose, at most 1000 Unicode characters. Do not claim an outcome before observing the result. For example:
+Every MCP tool, including `workspace_open`, `workspace_list`, `list_resources`, and `read_resource`, requires a `summary` string: a concise, nonblank paragraph describing the specific call's intended action and purpose, at most 1000 Unicode characters. Do not claim an outcome before observing the result. For example:
 
 ```json
 {"workspace":"WORKSPACE_ID","path":"Agents.md","summary":"Read the project guidance before inspecting code or running tests."}
 ```
 
-The MCP adapter validates summaries before side effects, removes the metadata before dispatch, and returns the trimmed summary as a labeled text paragraph and `structuredContent.summary`. Actual execution data remains under `structuredContent.result`; `isError` remains authoritative for tool errors. Invalid summaries produce a repairable tool error. Valid summaries are also returned when execution fails and must not be mistaken for evidence of success. Shell commands, Python code, and delegated prompts never execute summary text. This requirement is MCP-only: internal agent tools and direct CLI/HTTP tool APIs keep their existing contracts.
+The MCP adapter validates summaries before side effects and removes the metadata before dispatch. A valid summary is request-only metadata and is not echoed back in text or `structuredContent`. Actual execution data remains under `structuredContent.result`; elapsed call time is exposed as `structuredContent.time_cost_ms`. Successful calls use one terse status line such as `Result: ok · 12 ms`; errors include the error message. `isError` remains authoritative for tool errors. Invalid summaries produce a repairable tool error. Shell commands, Python code, and GUI input never execute summary text. This requirement is MCP-only: internal agent tools and direct CLI/HTTP tool APIs keep their existing contracts.
 
 ## Release build and production run (not development/test)
 

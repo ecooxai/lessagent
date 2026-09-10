@@ -3,8 +3,6 @@
 import asyncio, base64, json, os, pathlib, signal, socket, struct, subprocess, sys, tempfile, time, zlib
 import jsonschema
 import urllib.request, urllib.error
-from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
-import threading
 from mcp import ClientSession, StdioServerParameters
 from mcp.client.stdio import stdio_client
 from mcp.client.streamable_http import streamablehttp_client
@@ -16,33 +14,6 @@ PIXEL = 'iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAQAAAC1HAwCAAAAC0lEQVR42mP8/x8AAwMCAO+
 
 # Deterministic 7x5 files; no Pillow dependency is needed to execute this suite.
 FORMAT_FIXTURES = {'jpeg': '/9j/4AAQSkZJRgABAQAAAQABAAD/2wBDAAgGBgcGBQgHBwcJCQgKDBQNDAsLDBkSEw8UHRofHh0aHBwgJC4nICIsIxwcKDcpLDAxNDQ0Hyc5PTgyPC4zNDL/2wBDAQkJCQwLDBgNDRgyIRwhMjIyMjIyMjIyMjIyMjIyMjIyMjIyMjIyMjIyMjIyMjIyMjIyMjIyMjIyMjIyMjIyMjL/wAARCAAFAAcDASIAAhEBAxEB/8QAHwAAAQUBAQEBAQEAAAAAAAAAAAECAwQFBgcICQoL/8QAtRAAAgEDAwIEAwUFBAQAAAF9AQIDAAQRBRIhMUEGE1FhByJxFDKBkaEII0KxwRVS0fAkM2JyggkKFhcYGRolJicoKSo0NTY3ODk6Q0RFRkdISUpTVFVWV1hZWmNkZWZnaGlqc3R1dnd4eXqDhIWGh4iJipKTlJWWl5iZmqKjpKWmp6ipqrKztLW2t7i5usLDxMXGx8jJytLT1NXW19jZ2uHi4+Tl5ufo6erx8vP09fb3+Pn6/8QAHwEAAwEBAQEBAQEBAQAAAAAAAAECAwQFBgcICQoL/8QAtREAAgECBAQDBAcFBAQAAQJ3AAECAxEEBSExBhJBUQdhcRMiMoEIFEKRobHBCSMzUvAVYnLRChYkNOEl8RcYGRomJygpKjU2Nzg5OkNERUZHSElKU1RVVldYWVpjZGVmZ2hpanN0dXZ3eHl6goOEhYaHiImKkpOUlZaXmJmaoqOkpaanqKmqsrO0tba3uLm6wsPExcbHyMnK0tPU1dbX2Nna4uPk5ebn6Onq8vP09fb3+Pn6/9oADAMBAAIRAxEAPwDzKiiivUPLP//Z', 'gif': 'R0lGODdhBwAFAIEAABQ8WgAAAAAAAAAAACwAAAAABwAFAAAIDAABCBxIsKDBgwcDAgA7', 'webp': 'UklGRjQAAABXRUJQVlA4ICgAAACQAQCdASoHAAUAAUAmJYgCdLoAA5gA/vjqf+j64RZGX+N8QXtSYAAA'}
-
-class ProviderFixture(BaseHTTPRequestHandler):
-    """Keep delegated-job tests deterministic and off real model accounts."""
-    requests = []
-
-    def log_message(self, *args):
-        pass
-
-    def do_GET(self):
-        self.send_response(200)
-        self.send_header('Content-Type', 'application/json')
-        self.end_headers()
-        self.wfile.write(json.dumps({'models': [{'slug': 'gpt-5.4-mini', 'display_name': 'Fixture'}]}).encode())
-
-    def do_POST(self):
-        body = json.loads(self.rfile.read(int(self.headers['Content-Length'])))
-        assert self.headers['Authorization'] == 'Bearer fixture-token'
-        assert 'MCP_SUMMARY_METADATA_ONLY' not in json.dumps(body), 'summary leaked into the delegated prompt'
-        self.requests.append(body)
-        output = [{'type': 'message', 'role': 'assistant', 'content': [
-            {'type': 'output_text', 'text': 'MCP fixture complete <score>10</score><done><done>'}]}]
-        event = {'type': 'response.completed', 'response': {'output': output, 'usage': {
-            'input_tokens': 100, 'input_tokens_details': {'cached_tokens': 0}, 'output_tokens': 20}}}
-        self.send_response(200)
-        self.send_header('Content-Type', 'text/event-stream')
-        self.end_headers()
-        self.wfile.write(('data: ' + json.dumps(event) + '\n\n').encode())
 
 
 def payload(result):
@@ -71,7 +42,7 @@ def check_image_metadata(result, width, height):
 async def exercise(session, root, label):
     init = await session.initialize()
     assert init.serverInfo.name == 'lessagent'
-    assert all(word in init.instructions for word in ['Agents.md', 'AGENTS.md', 'read_file', 'first', 'summary', 'has_more'])
+    assert all(word in init.instructions for word in ['Agents.md', 'AGENTS.md', 'read_file', 'first', 'summary', 'has_more', 'Progress 60/100'])
     assert INSTRUCTION_URI in init.instructions
     assert init.capabilities.resources is not None
     assert not init.capabilities.resources.subscribe and not init.capabilities.resources.listChanged
@@ -94,7 +65,9 @@ async def exercise(session, root, label):
         assert isinstance(system['gpus'], list) and isinstance(system['displays'], list)
     await session.send_ping()
     definitions = {t.name:t for t in (await session.list_tools()).tools}
-    assert {'bash','python','shell','computer','write_image','read_file'} <= definitions.keys()
+    assert {'bash','python','shell','write_image','read_file','get_screenshot','virtual_pointer','virtual_keyboard','list_windows','app_open'} <= definitions.keys()
+    for removed_name in ['computer', 'agent_run', 'agent_status']:
+        assert removed_name not in definitions
     for tool in definitions.values():
         jsonschema.Draft202012Validator.check_schema(tool.inputSchema)
         assert tool.description.startswith('Summary: '), (tool.name, tool.description)
@@ -106,6 +79,7 @@ async def exercise(session, root, label):
         assert summary_schema['type'] == 'string' and summary_schema['minLength'] == 1
         assert summary_schema['maxLength'] == 1000 and summary_schema['pattern'] == r'\S'
         assert 'Agents.md' in tool.description and 'AGENTS.md' in tool.description and 'Call summary:' in tool.description
+        assert 'Progress 60/100' in tool.description and 'already been completed' in tool.description
         for invalid in [None, False, 7, [], {}, '', ' \t\r\n\u2003', 'x' * 1001, '雪' * 1001]:
             assert not jsonschema.Draft202012Validator(summary_schema).is_valid(invalid)
             rejected = await session.call_tool(tool.name, {'summary': invalid})
@@ -114,34 +88,54 @@ async def exercise(session, root, label):
         rejected = await session.call_tool(tool.name, {})
         assert rejected.isError and 'summary' in visible_text(rejected), (tool.name, rejected)
         assert (await session.call_tool(tool.name, None)).isError
-    for name in ['list_resources', 'read_resource', 'workspace_list', 'read_file']:
+    for name in ['list_resources', 'read_resource', 'workspace_list', 'read_file', 'get_screenshot', 'list_windows']:
         annotations = definitions[name].annotations
         assert annotations.readOnlyHint and not annotations.destructiveHint and not annotations.openWorldHint
-    for name in ['computer', 'browser_open']:
+    for name in ['browser_open']:
         fields = definitions[name].inputSchema['properties']
         assert fields['width'] == system['browser_size_schema']['width']
         assert fields['height'] == system['browser_size_schema']['height']
+        url_description = fields['url']['description']
+        assert '?purpose=texttodescribepurposeofthiswindow_by_modelname' in url_description
+        assert '&purpose=...' in url_description and 'URL-encode' in url_description
+        assert 'existing persistent managed profile by default' in definitions[name].description
     if system.get('displays'):
         primary = next(display for display in system['displays'] if display['primary'])
         assert definitions['browser_open'].inputSchema['properties']['width']['maximum'] == primary['logical_width']
         assert definitions['browser_open'].inputSchema['properties']['height']['maximum'] == primary['logical_height']
-    assert 'distance' in definitions['computer'].inputSchema['properties']
-    assert 'background-only' in definitions['computer'].description
+    for name in ['get_screenshot', 'virtual_pointer', 'virtual_keyboard', 'list_windows', 'app_open']:
+        assert definitions[name].inputSchema['additionalProperties'] is False
+    assert 'action' not in definitions['get_screenshot'].inputSchema['properties']
+    assert 'text' not in definitions['virtual_pointer'].inputSchema['properties']
+    assert 'x' not in definitions['virtual_keyboard'].inputSchema['properties']
+    assert definitions['virtual_pointer'].inputSchema['properties']['action']['enum'] == ['move','click','drag','scroll']
+    assert definitions['virtual_keyboard'].inputSchema['properties']['action']['enum'] == ['type','key']
+    for name in ['virtual_pointer', 'virtual_keyboard', 'app_open']:
+        assert not definitions[name].annotations.readOnlyHint
+    assert 'distance' in definitions['virtual_pointer'].inputSchema['properties']
+    assert 'background' in definitions['virtual_pointer'].description
     assert '4 KB excerpt' in definitions['read_file'].description and '8 KB' in definitions['read_file'].description
     called = set()
     async def invoke(name, **args):
         summary = args.pop('summary', f'Exercise {name} through {label} to verify the MCP contract.')
         result = await session.call_tool(name, dict(summary=summary, **args))
         called.add(name)
-        assert result.structuredContent['summary'] == summary.strip(), (name, result)
+        structured = result.structuredContent
+        assert 'summary' not in structured, (name, structured)
+        elapsed = structured['time_cost_ms']
+        assert isinstance(elapsed, int) and elapsed >= 0, (name, elapsed)
         assert result.content[0].type == 'text'
-        assert result.content[0].text == 'Call summary (client-provided intent): ' + summary.strip(), result
+        status = result.content[0].text
+        prefix = 'Result: error · ' if result.isError else 'Result: ok · '
+        assert status.startswith(prefix), (name, status)
+        assert status.splitlines()[0] == f'{prefix}{elapsed} ms', (name, status, elapsed)
+        if not result.isError:
+            assert status == f'Result: ok · {elapsed} ms', (name, status)
         return result
 
     discovered = payload(await invoke('list_resources'))
     assert discovered['resources'][0]['uri'] == INSTRUCTION_URI
     via_tool = await invoke('read_resource', uri=INSTRUCTION_URI)
-    assert 'Live host system information' in visible_text(via_tool)
     bridge_guide = payload(via_tool)['contents'][0]
     assert bridge_guide['uri'] == INSTRUCTION_URI and bridge_guide['mimeType'] == 'text/markdown'
     assert bridge_guide['_meta']['lessagent/system']['observed_at_unix_ms'] >= system['observed_at_unix_ms']
@@ -161,7 +155,7 @@ async def exercise(session, root, label):
     for candidate in ['Agents.md', 'AGENTS.md']:
         (root / candidate).unlink(missing_ok=True)
     missing = await call('read_file', path=guidance_name, summary='Check for project guidance before any command or edit.')
-    assert missing.isError and 'Error:' in visible_text(missing)
+    assert missing.isError and visible_text(missing).startswith('Result: error · ')
     guidance = '# Fixture guidance\n' + ('Use debug builds and isolated test ports.\n' * 220) + 'GUIDANCE-END'
     (root / guidance_name).write_text(guidance)
     offset = 0
@@ -181,7 +175,6 @@ async def exercise(session, root, label):
         ('write_file', {'path': 'blocked.txt', 'text': 'must not be written'}),
         ('bash', {'command': 'touch blocked-command.txt'}),
         ('python', {'code': "from pathlib import Path; Path('blocked-python.txt').touch()"}),
-        ('agent_run', {'prompt': 'Do not start this job without a summary.'}),
     ]:
         result = await session.call_tool(name, dict(workspace=workspace, **args))
         assert result.isError and 'summary' in visible_text(result), result
@@ -209,7 +202,7 @@ async def exercise(session, root, label):
         else: raise AssertionError('Program did not exit')
         assert r['exit_code']==0 and 'bash-ok' in r['output'] and str(root) in r['output'], r
         shown=visible_text(result)
-        assert 'bash-ok' in shown and 'Terminal:' in shown and not shown.lstrip().startswith('{'), shown
+        assert shown == result.content[0].text and shown.startswith('Result: ok · '), shown
     code="from pathlib import Path\nprint(\"quotes ' \\\" $HOME `echo injected` \\nUnicode: 雪\")\nPath('python-result.txt').write_text('python-ok')"
     r=await run('python',code=code,wait_ms=1000)
     assert r['exit_code']==0 and '$HOME `echo injected`' in r['output'] and '雪' in r['output'], r
@@ -219,8 +212,8 @@ async def exercise(session, root, label):
     first=await call('read_file',path='long.txt')
     first_data=payload(first); first_shown=visible_text(first)
     assert first_data['has_more'] and 1 <= first_data['returned_bytes'] <= 4000, first_data
-    assert 'File excerpt: long.txt' in first_shown and 'END-OF-FILE-MARKER' not in first_shown
-    assert len(first_shown) < len(long_text)//2, 'default MCP read_file must not dump the whole file'
+    assert first_shown.startswith('Result: ok · ') and 'END-OF-FILE-MARKER' not in first_shown
+    assert len(first_shown) < 80, 'successful MCP status text should stay terse; data belongs in structuredContent'
     capped=payload(await call('read_file',path='long.txt',limit=100000))
     assert capped['has_more'] and capped['returned_bytes'] <= 8000, capped
     second=payload(await call('read_file',path='long.txt',offset=first_data['next_offset'],limit=1000))
@@ -239,13 +232,13 @@ async def exercise(session, root, label):
     payload(await call('terminal_stop',terminal_id=r['terminal_id']))
     block={'type':'image','mimeType':'image/png','data':PIXEL}
     result=await call('write_image',path=f'{label}/pixel.png',image=block)
-    assert payload(result)['width']==1 and 'Saved image:' in visible_text(result)
+    assert payload(result)['width']==1 and visible_text(result).startswith('Result: ok · ')
     for result in [result,await call('read_file',path=f'{label}/pixel.png')]:
         image=next(c for c in result.content if c.type=='image')
         assert image.mimeType=='image/png' and base64.b64decode(image.data)==base64.b64decode(PIXEL)
         check_image_metadata(result, 1, 1)
     image_read=await call('read_file',path=f'{label}/pixel.png')
-    assert 'Image file:' in visible_text(image_read)
+    assert visible_text(image_read).startswith('Result: ok · ')
     assert (root/label/'pixel.png').read_bytes()==base64.b64decode(PIXEL)
     for path,image in [('../escape.png',block),('bad.png',dict(block,data='not-base64')),('bad.jpg',block),('bad.png',dict(block,mimeType='image/jpeg'))]:
         assert (await call('write_image',path=path,image=image)).isError
@@ -271,36 +264,34 @@ async def exercise(session, root, label):
     assert base64.b64decode(next(c.data for c in big.content if c.type=='image'))==png
     assert (await call('python')).isError
     assert (await call('not_a_tool')).isError
-    assert (await call('computer',action='click',x=1,y=1)).isError # Disabled by default.
+    for name, args in [
+        ('computer', {'action':'click','x':1,'y':1}),
+        ('agent_run', {'prompt':'unused'}),
+        ('agent_status', {'job_id':'unused'}),
+    ]:
+        removed = await call(name, **args)
+        assert removed.isError and f'Unknown tool: {name}' in visible_text(removed), removed
     disabled = await call('browser_open', url='http://127.0.0.1:1/')
     assert disabled.isError and 'Enable computer control' in visible_text(disabled)
+    for name, args in [
+        ('get_screenshot', {}), ('list_windows', {}),
+        ('virtual_pointer', {'action':'click','window_id':1,'pid':1,'x':1,'y':1}),
+        ('virtual_keyboard', {'action':'key','window_id':1,'pid':1,'key':'x'}),
+        ('app_open', {'app':'Blender'}),
+    ]:
+        disabled = await call(name, **args)
+        assert disabled.isError and 'Enable computer control' in visible_text(disabled), name
     inert = await run('bash', command='printf summary-is-metadata',
                      summary='Explain this call; do not execute $(touch summary-executed.txt).')
     assert inert['exit_code'] == 0 and 'summary-is-metadata' in inert['output']
     assert not (root / 'summary-executed.txt').exists()
-    job = payload(await call('agent_run', prompt='Reply with the deterministic fixture greeting.',
-                             summary='MCP_SUMMARY_METADATA_ONLY: verify delegation using the local model fixture.'))
-    for _ in range(200):
-        status = payload(await invoke('agent_status', job_id=job['job_id'], summary='Check whether the fixture job completed.'))
-        if status['status'] != 'running':
-            break
-        await asyncio.sleep(.05)
-    assert status['status'] == 'completed' and 'MCP fixture complete' in status['output'], status
-    assert 'MCP_SUMMARY_METADATA_ONLY' not in status['prompt']
-    assert ProviderFixture.requests, 'Delegated job never reached the local fixture'
     assert definitions.keys() <= called, definitions.keys() - called
     print(f'{label}: all {len(definitions)} tools, read-first guidance, summary validation/metadata, '
-          'resources/read+list, host info, image dimensions, Bash/Python, PTY input/stop, file/image roundtrips, local agent run/status PASS')
+          'resources/read+list, host info, image dimensions, Bash/Python, PTY input/stop, file/image roundtrips, removed agent job tools PASS')
 
 async def main(root, port):
     data=root/'data'; work=root/'workspace'; work.mkdir()
-    fixture = ThreadingHTTPServer(('127.0.0.1', 0), ProviderFixture)
-    fixture_thread = threading.Thread(target=fixture.serve_forever, daemon=True)
-    fixture_thread.start()
-    auth = root / 'auth'; auth.mkdir()
-    (auth / 'auth.json').write_text(json.dumps({'tokens': {'access_token': 'fixture-token', 'account_id': 'fixture-account'}}))
     env = {k: v for k, v in os.environ.items() if k not in ('OPENAI_API_KEY', 'ANTHROPIC_API_KEY', 'GEMINI_API_KEY')}
-    env.update(CODEX_HOME=str(auth), LESSAGENT_CODEX_BASE_URL=f'http://127.0.0.1:{fixture.server_port}')
     print(f'Debug MCP integration: binary={BINARY}, isolated port={port}')
     args=['--port',str(port),'--data-dir',str(data)]
     with (root/'server.log').open('w') as log:
@@ -362,7 +353,6 @@ async def main(root, port):
             server.send_signal(signal.SIGINT)
             try: server.wait(timeout=10)
             except subprocess.TimeoutExpired: server.kill(); server.wait()
-            fixture.shutdown(); fixture.server_close(); fixture_thread.join(timeout=5)
 
 if __name__=='__main__':
     with tempfile.TemporaryDirectory(prefix='lessagent-mcp-test-') as tmp, socket.socket() as sock:

@@ -252,9 +252,15 @@ impl App {
         Ok(w)
     }
     pub fn log(&self, kind: &str, message: &str) {
+        self.log_with_details(kind, message, None);
+    }
+    pub fn log_with_details(&self, kind: &str, message: &str, details: Option<Value>) {
+        let mut entry = json!({"at":crate::now(),"kind":kind,"message":crate::clip(message,4000)});
+        if let Some(details) = details {
+            entry["details"] = details;
+        }
         let mut disk = self.disk.lock().unwrap();
-        disk.logs
-            .push(json!({"at":crate::now(),"kind":kind,"message":crate::clip(message,4000)}));
+        disk.logs.push(entry);
         if disk.logs.len() > 500 {
             disk.logs.remove(0);
         }

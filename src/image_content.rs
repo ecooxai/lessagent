@@ -28,6 +28,10 @@ pub fn attach(result: &mut Value, bytes: &[u8], mime: &str) -> Result<()> {
         "window_id",
         "pid",
         "browser_chrome_captured",
+        "capture_backend",
+        "capture_quality",
+        "perspective_corrected",
+        "geometry_source",
     ] {
         if let Some(value) = result.get(key) {
             metadata[key] = value.clone();
@@ -75,7 +79,8 @@ mod tests {
             .decode(PIXEL)
             .unwrap();
         let mut value = json!({"screen_width":4000,"screen_height":3000,"width":null,"height":null,
-            "coordinate_space":"window","logical_width":0.5,"logical_height":0.5,"window_id":7});
+            "coordinate_space":"window","logical_width":0.5,"logical_height":0.5,"window_id":7,
+            "capture_quality":"thumbnail","capture_backend":"native-window-rectified-thumbnail","perspective_corrected":true});
         attach(&mut value, &bytes, "image/png").unwrap();
         assert_eq!(value["width"], 1);
         assert_eq!(value["height"], 1);
@@ -84,6 +89,14 @@ mod tests {
         assert_eq!(value["image_metadata"]["logical_width"], 0.5);
         let block = mcp_block(&value["image"]);
         assert_eq!(block["_meta"]["lessagent/image"], value["image_metadata"]);
+        assert_eq!(
+            block["_meta"]["lessagent/image"]["capture_quality"],
+            "thumbnail"
+        );
+        assert_eq!(
+            block["_meta"]["lessagent/image"]["perspective_corrected"],
+            true
+        );
         assert_eq!(block["width"], 1);
         assert_eq!(block["height"], 1);
         assert_eq!(block["format"], "png");

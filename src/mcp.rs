@@ -1,10 +1,10 @@
 use crate::state::App;
 use serde_json::{Value, json};
-use std::sync::Arc;
+use std::{sync::Arc, time::Instant};
 
 const MAX_SUMMARY_CHARS: usize = 1000;
 const WORKSPACE_INSTRUCTIONS: &str = "Before inspecting project files, running commands, editing, or delegating work, read the workspace-root Agents.md with read_file first. If it is absent, try AGENTS.md; if neither exists, report that and continue. Follow has_more/next_offset until the entire guidance file has been read. Read applicable nested Agents.md/AGENTS.md before working in a subdirectory. Opening or listing workspaces and reading guidance are bootstrap steps allowed before other project work.";
-const SUMMARY_INSTRUCTIONS: &str = "Every tool call must include summary: a concise, nonblank paragraph (at most 1000 characters) explaining what this specific call will do and why. Describe intent, not an unverified outcome; do not include secrets. The summary is client-provided metadata, not executable input.";
+const SUMMARY_INSTRUCTIONS: &str = "Every tool call must include summary: a concise, nonblank paragraph (at most 1000 characters). State what this specific call will do and why, then include current task progress in the same paragraph: a progress score such as Progress 60/100, what has already been completed, and what this call advances next. Describe intended action and verified prior progress only; never claim this call succeeded before observing its result, and do not include secrets. The summary is client-provided metadata, not executable input.";
 
 fn server_instructions() -> String {
     format!(
@@ -29,8 +29,6 @@ fn tool_definitions() -> Vec<Value> {
     defs.extend([
         json!({"name":"workspace_open","parameters":{"type":"object","properties":{"path":{"type":"string"}},"required":["path"]}}),
         json!({"name":"workspace_list","parameters":{"type":"object","properties":{}}}),
-        json!({"name":"agent_run","parameters":{"type":"object","properties":{"workspace":{"type":"string"},"prompt":{"type":"string"}},"required":["workspace","prompt"]}}),
-        json!({"name":"agent_status","parameters":{"type":"object","properties":{"job_id":{"type":"string"}},"required":["job_id"]}}),
         json!({"name":"list_resources","parameters":{"type":"object","properties":{},"additionalProperties":false}}),
         json!({"name":"read_resource","parameters":{"type":"object","properties":{"uri":{"type":"string","description":"Exact URI from list_resources; use lessagent://server/instruction.md for host information and server guidance."}},"required":["uri"],"additionalProperties":false}})
     ]);
@@ -55,10 +53,11 @@ fn tool_annotations(name: &str) -> Value {
         "read_file"
             | "list_files"
             | "workspace_list"
-            | "agent_status"
             | "terminal_read"
             | "list_resources"
             | "read_resource"
+            | "get_screenshot"
+            | "list_windows"
     );
     let non_destructive = read_only || matches!(name, "workspace_open" | "browser_open");
     let closed_world = read_only || matches!(name, "write_file" | "write_image" | "terminal_stop");
@@ -129,25 +128,18 @@ pub async fn handle(app: Arc<App>, request: Value) -> Option<Value> {
         "tools/list" => Ok(json!({"tools":tool_definitions()})),
         "tools/call" => {
             let name = params["name"].as_str().unwrap_or_default();
-            let arguments = params
-                .get("arguments")
-                .cloned()
-                .unwrap_or_else(|| json!({}));
+            let started = Instant::now();
             let result = call(app, params).await;
+            let time_cost_ms = started.elapsed().as_millis() as u64;
             let (mut v, is_error) = match result {
                 Ok(v) => (v, false),
                 Err(e) => (json!({"error":e.to_string()}), true),
             };
             enrich_file_result(name, &mut v);
             let image = v.as_object_mut().and_then(|o| o.remove("image"));
-            let mut content = mcp_result_content(name, &arguments, &v, image, is_error);
-            let mut structured = json!({"result":v});
-            if let Ok(summary) = call_summary(&arguments) {
-                content.insert(0, json!({"type":"text","text":format!("Call summary (client-provided intent): {summary}")}));
-                structured["summary"] = json!(summary);
-            }
+            let content = mcp_result_content(&v, image, is_error, time_cost_ms);
+            let mut structured = json!({"result":v,"time_cost_ms":time_cost_ms});
             if !is_error && matches!(name, "workspace_open" | "workspace_list") {
-                content.push(json!({"type":"text","text":WORKSPACE_INSTRUCTIONS}));
                 structured["instructions"] = json!(format!(
                     "{} {WORKSPACE_INSTRUCTIONS}",
                     crate::resources::READ_FIRST
@@ -176,10 +168,35 @@ fn mcp_tool_description(name: &str, fallback: &str) -> String {
             "Use it to learn OS, CPU, GPU, RAM, screen geometry, output rules and safe coding/computer workflows; equivalent to resources/read.",
             "Pass summary and uri from list_resources (lessagent://server/instruction.md). No workspace or computer-control permission is required. Returns Markdown and structured system metadata; refresh after display changes.",
         ),
+        "get_screenshot" => (
+            "Capture a standalone read-only screenshot.",
+            "Use it for the initial window view or recovery from screenshot_error, with the same standalone screenshot behavior and metadata returned after virtual input.",
+            "Pass workspace and optional capture_path/show_pointer. For a macOS window pass exact window_id and pid from list_windows. Image pixel dimensions are authoritative. Stage Manager can require a perspective-corrected low-resolution thumbnail; inspect capture_quality. Capture never activates the app.",
+        ),
+        "virtual_pointer" => (
+            "Control a standalone background virtual pointer.",
+            "Use move, click, drag or scroll on the selected window without moving the physical pointer.",
+            "Pass action, window_id/pid on macOS, image pixel coordinates and screen_width/screen_height. Drag accepts a continuous path. Every input returns a fresh screenshot. Chrome requires browser_open; native windows use exact-ID geometry. Never replay input solely because capture failed.",
+        ),
+        "virtual_keyboard" => (
+            "Type text or press a key chord in a background window.",
+            "Use it after selecting the intended input with virtual_pointer. Keyboard input is separate from pointer and screenshot tools.",
+            "Pass action:type with text, or action:key with key (such as cmd+a), plus window_id/pid on macOS. Never supply both text and key. Returns a fresh automatic screenshot; no global-input fallback.",
+        ),
+        "list_windows" => (
+            "List existing windows without activation.",
+            "Use it to select the exact existing window and owner for background control.",
+            "Pass workspace, then reuse window_id and pid with get_screenshot, virtual_pointer and virtual_keyboard. Window listing is read-only; screenshot the target before choosing coordinates.",
+        ),
+        "app_open" => (
+            "Open or reuse a native application without requesting foreground focus.",
+            "Use it for native apps such as Blender; Chrome must use browser_open instead.",
+            "Pass app (name, bundle ID or .app path). new_instance defaults true; false reuses one unambiguous existing window. Blender launches with --no-window-focus. Returns IDs and an automatic screenshot. Other apps may ignore nonactivation; inspect focus_changed. Never restarts an existing app.",
+        ),
         "browser_open" => (
-            "Open an isolated background Chrome window, default 1000 by 600 logical points.",
-            "Use it to create a controlled page without touching the user's normal browser or physical pointer.",
-            "Pass workspace, summary and an HTTP(S) url; optional width/height must not exceed the current primary display's logical resolution. The window is fitted to its visible work area. Reuse returned window_id/pid and image width/height for computer input. Screenshots default to project output/computer/.",
+            "Open a new background Chrome window in the existing persistent managed profile by default, with a default size of 1000 by 600 logical points.",
+            "Use it to create another controlled window while preserving cookies/storage from Lessagent's existing managed Chrome profile and leaving the user's normal browser and physical pointer untouched.",
+            "Pass workspace, summary and an HTTP(S) url; include a purpose query parameter describing why this window exists and the model name, using ?purpose=texttodescribepurposeofthiswindow_by_modelname (or &purpose=... when the URL already has a query string, with the value URL-encoded). Optional width/height must not exceed the current primary display's logical resolution. browser_open creates a new window but reuses the persistent Lessagent-managed user-data directory by default, and reuses its live Chrome process when available; it creates a new managed profile only when none exists. Reuse returned window_id/pid and image width/height with virtual_pointer/virtual_keyboard. Screenshots default to project output/computer/.",
         ),
         "shell" => (
             "Run Bash in a visible persistent workspace terminal.",
@@ -231,11 +248,6 @@ fn mcp_tool_description(name: &str, fallback: &str) -> String {
             "Use it to discover the project layout and choose which files need inspection.",
             "Pass workspace. Use read_file with bounded ranges for the specific files you need next.",
         ),
-        "computer" => (
-            "Observe and control application windows with screenshots, pointer actions, typing, keys, drags, and scrolling.",
-            "Use it for GUI tasks that cannot be completed reliably through files or command-line tools.",
-            "On macOS use browser_open (or computer action browser_open with url) to create an isolated background Chrome window; then pass its window_id, pid and screenshot dimensions for input. Unmanaged Chrome input is rejected instead of sharing physical button state. For other native apps call windows, select window_id and pid, and screenshot that target first. macOS is background-only and never moves or falls back to the main pointer; successful input returns a fresh image observation. Linux supports desktop mode.",
-        ),
         "workspace_open" => (
             "Open an existing absolute local folder as a Lessagent workspace.",
             "Use it to establish the workspace id required by project-scoped MCP tools.",
@@ -245,16 +257,6 @@ fn mcp_tool_description(name: &str, fallback: &str) -> String {
             "List the workspaces currently known to Lessagent.",
             "Use it to recover an existing workspace id instead of opening the same folder again.",
             "Pass summary, then select the workspace whose path matches the task and read its Agents.md first.",
-        ),
-        "agent_run" => (
-            "Start a persistent autonomous Lessagent job in a workspace.",
-            "Use it to delegate a multi-step project task to the configured model/provider.",
-            "Pass workspace and a concrete prompt, then use agent_status with the returned job_id to inspect progress and output.",
-        ),
-        "agent_status" => (
-            "Read the current status and output of a persistent Lessagent job.",
-            "Use it to inspect the result of a job started with agent_run.",
-            "Pass the job_id returned by agent_run and check its status/output before deciding the next action.",
         ),
         _ => (
             if fallback.is_empty() {
@@ -287,94 +289,19 @@ fn enrich_file_result(name: &str, value: &mut Value) {
 }
 
 fn mcp_result_content(
-    name: &str,
-    arguments: &Value,
     value: &Value,
     image: Option<Value>,
     is_error: bool,
+    time_cost_ms: u64,
 ) -> Vec<Value> {
     let mut content = Vec::new();
     let text = if is_error {
         format!(
-            "Error: {}",
+            "Result: error · {time_cost_ms} ms\n{}",
             value["error"].as_str().unwrap_or("tool call failed")
         )
     } else {
-        match name {
-            "shell" | "bash" | "python" | "terminal_read" | "terminal_write" | "terminal_stop" => {
-                let output = value["output"].as_str().unwrap_or_default();
-                let shown = if output.is_empty() {
-                    "[no command output]"
-                } else {
-                    output
-                };
-                let terminal = value["terminal_id"].as_str().unwrap_or("unknown");
-                let exited = value["exited"]
-                    .as_bool()
-                    .map(|v| v.to_string())
-                    .unwrap_or_else(|| "unknown".into());
-                let exit_code = value["exit_code"]
-                    .as_i64()
-                    .map(|v| v.to_string())
-                    .unwrap_or_else(|| "running".into());
-                format!(
-                    "{shown}\n\nTerminal: {terminal} · exited: {exited} · exit code: {exit_code}"
-                )
-            }
-            "read_resource" => value["contents"]
-                .as_array()
-                .map(|items| {
-                    items
-                        .iter()
-                        .filter_map(|item| item["text"].as_str())
-                        .collect::<Vec<_>>()
-                        .join("\n\n")
-                })
-                .unwrap_or_default(),
-            "read_file" if value["text"].is_string() => {
-                let path = arguments["path"].as_str().unwrap_or("unknown");
-                let offset = value["offset"].as_u64().unwrap_or(0);
-                let returned = value["returned_bytes"].as_u64().unwrap_or(0);
-                let total = value["total_bytes"].as_u64().unwrap_or(0);
-                let next = value["next_offset"].as_u64().unwrap_or(total);
-                let more = value["has_more"].as_bool().unwrap_or(false);
-                let paging = if more {
-                    format!(" More remains; continue with offset={next}.")
-                } else {
-                    String::new()
-                };
-                format!(
-                    "File excerpt: {path} · bytes {offset}..{} of {total}.{}\n\n{}",
-                    offset + returned,
-                    paging,
-                    value["text"].as_str().unwrap_or_default()
-                )
-            }
-            "read_file" => {
-                format!(
-                    "Image file: {}",
-                    arguments["path"].as_str().unwrap_or("unknown")
-                )
-            }
-            "write_image" => format!(
-                "Saved image: {} · {}×{} · {} bytes",
-                value["path"].as_str().unwrap_or("unknown"),
-                value["width"].as_u64().unwrap_or(0),
-                value["height"].as_u64().unwrap_or(0),
-                value["bytes"].as_u64().unwrap_or(0)
-            ),
-            "computer" | "browser_open" if image.is_some() => {
-                let mut meta = value.clone();
-                if let Some(object) = meta.as_object_mut() {
-                    object.remove("output");
-                }
-                format!(
-                    "Computer observation:\n{}",
-                    serde_json::to_string_pretty(&meta).unwrap_or_else(|_| "{}".into())
-                )
-            }
-            _ => serde_json::to_string_pretty(value).unwrap_or_else(|_| value.to_string()),
-        }
+        format!("Result: ok · {time_cost_ms} ms")
     };
     content.push(json!({"type":"text","text":text}));
     if let Some(i) = image {
@@ -388,6 +315,16 @@ async fn call(app: Arc<App>, p: &Value) -> crate::Result<Value> {
     let mut arguments = p.get("arguments").cloned().unwrap_or_else(|| json!({}));
     // Validate before any workspace/file/process/agent side effects.
     call_summary(&arguments)?;
+    // Removed public MCP-only surfaces are rejected before workspace dispatch.
+    // Their internal backend capabilities remain available to the normal Lessagent runtime.
+    if name == "computer" {
+        return Err(crate::err(
+            "Unknown tool: computer; use the standalone GUI tools instead",
+        ));
+    }
+    if matches!(name, "agent_run" | "agent_status") {
+        return Err(crate::err(format!("Unknown tool: {name}")));
+    }
     // Metadata must never reach shell code, delegated prompts, or GUI input.
     arguments.as_object_mut().unwrap().remove("summary");
     if name == "read_file" {
@@ -400,6 +337,16 @@ async fn call(app: Arc<App>, p: &Value) -> crate::Result<Value> {
         arguments["limit"] = json!(limit);
     }
     let a = &arguments;
+    if matches!(
+        name,
+        "list_resources" | "read_resource" | "workspace_open" | "workspace_list"
+    ) {
+        app.log_with_details(
+            "tool",
+            &format!("{name} · MCP"),
+            Some(crate::tools::tool_log_details(name, a)),
+        );
+    }
     match name {
         "list_resources" => crate::resources::list(a).map_err(|(_, message)| crate::err(message)),
         "read_resource" => crate::resources::read(app, a)
@@ -409,21 +356,6 @@ async fn call(app: Arc<App>, p: &Value) -> crate::Result<Value> {
             app.open_workspace(std::path::Path::new(crate::tools::string(a, "path")?))?,
         )?),
         "workspace_list" => Ok(json!(app.disk.lock().unwrap().workspaces)),
-        "agent_run" => Ok(
-            json!({"job_id":crate::agent::start(app,crate::tools::string(a,"workspace")?,crate::tools::string(a,"prompt")?)?}),
-        ),
-        "agent_status" => {
-            let id = crate::tools::string(a, "job_id")?;
-            Ok(json!(
-                app.disk
-                    .lock()
-                    .unwrap()
-                    .jobs
-                    .iter()
-                    .find(|j| j.id == id)
-                    .ok_or_else(|| crate::err("Job not found"))?
-            ))
-        }
         _ => crate::tools::execute(app, crate::tools::string(a, "workspace")?, name, a).await,
     }
 }
@@ -466,7 +398,7 @@ mod tests {
     fn every_mcp_tool_requires_summary_without_changing_internal_tools() {
         let definitions = tool_definitions();
         let internal = crate::tools::definitions();
-        assert_eq!(definitions.len(), internal.len() + 6);
+        assert_eq!(definitions.len(), internal.len() + 4);
         let mut names = std::collections::HashSet::new();
         for tool in &definitions {
             assert!(names.insert(tool["name"].as_str().unwrap()));
@@ -515,6 +447,55 @@ mod tests {
                     .contains(&json!("workspace"))
             );
         }
+    }
+
+    #[tokio::test]
+    async fn aggregate_computer_tool_is_not_advertised_or_callable_over_mcp() {
+        assert!(
+            tool_definitions()
+                .iter()
+                .all(|tool| tool["name"] != "computer")
+        );
+        let fixture = TestApp::new();
+        let result = fixture
+            .tool(
+                "computer",
+                json!({"summary":"Progress 1/100 — done: MCP initialized. Next: verify the removed aggregate name is rejected."}),
+            )
+            .await;
+        assert_eq!(result["isError"], true);
+        assert!(
+            result["structuredContent"]["result"]["error"]
+                .as_str()
+                .unwrap()
+                .contains("Unknown tool: computer")
+        );
+    }
+
+    #[tokio::test]
+    async fn agent_job_tools_are_not_advertised_or_callable_over_mcp() {
+        for name in ["agent_run", "agent_status"] {
+            assert!(tool_definitions().iter().all(|tool| tool["name"] != name));
+        }
+        let fixture = TestApp::new();
+        for (name, arguments) in [
+            (
+                "agent_run",
+                json!({"workspace":"unused","prompt":"unused","summary":"Progress 1/100 — done: MCP initialized. Next: verify removed agent_run is rejected."}),
+            ),
+            (
+                "agent_status",
+                json!({"job_id":"unused","summary":"Progress 1/100 — done: MCP initialized. Next: verify removed agent_status is rejected."}),
+            ),
+        ] {
+            let result = fixture.tool(name, arguments).await;
+            assert_eq!(result["isError"], true, "{name}: {result}");
+            assert_eq!(
+                result["structuredContent"]["result"]["error"],
+                format!("Unknown tool: {name}")
+            );
+        }
+        assert!(fixture.app.disk.lock().unwrap().jobs.is_empty());
     }
 
     #[test]
@@ -605,10 +586,14 @@ mod tests {
             format!("{} {WORKSPACE_INSTRUCTIONS}", crate::resources::READ_FIRST)
         );
         assert!(listed["structuredContent"]["result"].is_array());
-        assert_eq!(
-            listed["content"].as_array().unwrap().last().unwrap()["text"],
-            WORKSPACE_INSTRUCTIONS
+        assert_eq!(listed["content"].as_array().unwrap().len(), 1);
+        assert!(
+            listed["content"][0]["text"]
+                .as_str()
+                .unwrap()
+                .starts_with("Result: ok · ")
         );
+        assert!(listed["structuredContent"]["time_cost_ms"].is_u64());
     }
 
     #[tokio::test]
@@ -666,31 +651,30 @@ mod tests {
         args["summary"] = json!("  Save the fixture text for verification.  ");
         let result = fixture.tool("write_file", args).await;
         assert_eq!(result["isError"], false);
-        assert_eq!(
-            result["structuredContent"]["summary"],
-            "Save the fixture text for verification."
-        );
+        assert!(result["structuredContent"].get("summary").is_none());
+        assert!(result["structuredContent"]["time_cost_ms"].is_u64());
         assert_eq!(result["structuredContent"]["result"]["bytes"], 8);
         assert_eq!(
             std::fs::read_to_string(fixture.root.join("sentinel.txt")).unwrap(),
             "verified"
         );
-        assert_eq!(
-            result["content"][0]["text"],
-            "Call summary (client-provided intent): Save the fixture text for verification."
+        assert!(
+            result["content"][0]["text"]
+                .as_str()
+                .unwrap()
+                .starts_with("Result: ok · ")
         );
         let failed = fixture.tool("read_file", json!({"workspace":workspace,"path":"absent.txt","summary":"Read an absent file to verify error handling."})).await;
         assert_eq!(failed["isError"], true);
-        assert_eq!(
-            failed["structuredContent"]["summary"],
-            "Read an absent file to verify error handling."
-        );
-        assert!(
-            failed["content"][1]["text"]
-                .as_str()
-                .unwrap()
-                .starts_with("Error: ")
-        );
+        assert!(failed["structuredContent"].get("summary").is_none());
+        assert!(failed["structuredContent"]["time_cost_ms"].is_u64());
+        let error_text = failed["content"][0]["text"].as_str().unwrap();
+        let error = failed["structuredContent"]["result"]["error"]
+            .as_str()
+            .unwrap();
+        assert!(!error.is_empty());
+        assert!(error_text.starts_with("Result: error · "));
+        assert!(error_text.ends_with(error));
     }
     #[tokio::test]
     async fn resource_protocol_and_bridge_errors_are_safe_bootstrap_calls() {
@@ -741,8 +725,8 @@ mod tests {
             assert_eq!(tool_annotations(name)["destructiveHint"], false);
             assert_eq!(tool_annotations(name)["openWorldHint"], false);
         }
-        assert_eq!(tool_annotations("computer")["readOnlyHint"], false);
-        assert_eq!(tool_annotations("computer")["destructiveHint"], true);
+        assert_eq!(tool_annotations("virtual_pointer")["readOnlyHint"], false);
+        assert_eq!(tool_annotations("virtual_pointer")["destructiveHint"], true);
         assert!(fixture.app.disk.lock().unwrap().workspaces.is_empty());
     }
 }

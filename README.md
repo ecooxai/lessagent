@@ -104,7 +104,7 @@ Tool-only clients can use the read-only `list_resources` and `read_resource` too
 
 Use project-root `output/` for important finished work: verified binaries, images, 3D files, renders, and other deliverables. Direct computer captures default to `output/computer/`; internal agent iteration artifacts keep their existing locations. Finish each task with a factual summary of changes, output paths, actual test results, and limitations.
 
-`browser_open` now defaults to **1000 × 600 logical points**. Both it and `computer` action `browser_open` advertise maxima based on the current primary display's logical resolution, and revalidate before launching Chrome. Windows are fitted and centered within its visible work area (excluding menu bar/Dock); `browser_size` reports requested/actual/maximum sizes. These are window dimensions, not Retina screenshot pixels. Refresh `tools/list` after changing resolution.
+`browser_open` opens a new window in the existing persistent Lessagent-managed Chrome profile by default (creating that managed profile only when none exists). Its `url` should include a model-authored purpose query such as `?purpose=texttodescribepurposeofthiswindow_by_modelname`; append `&purpose=...` when a query string already exists and URL-encode the value. It defaults to **1000 × 600 logical points**, advertises maxima based on the current primary display's logical resolution, and revalidates before launching Chrome. Windows are fitted and centered within its visible work area (excluding menu bar/Dock); `browser_size` reports requested/actual/maximum sizes. These are window dimensions, not Retina screenshot pixels. Refresh `tools/list` after changing resolution.
 
 Image responses provide actual encoded `width`, `height`, `format`, and `image_metadata`, plus `screen_width`/`screen_height` for screenshots. The MCP image block carries `_meta["lessagent/image"]` and compatibility aliases for clients that forward those fields. Use those verified pixel dimensions for coordinates, not requested window sizes. Client-private inspector fields such as `fovea` are not fabricated; an adapter may still ignore extension metadata.
 
@@ -128,7 +128,7 @@ For a local MCP client that supports stdio, configure the absolute binary path:
 }
 ```
 
-The stdio process bridges to the running backend. Add matching `--port` and `--data-dir` arguments when using custom settings. Tools include workspace open/list, agent run/status, file operations, PTYs, and computer control.
+The stdio process bridges to the running backend. Add matching `--port` and `--data-dir` arguments when using custom settings. Tools include workspace open/list, resource bridges, file operations, PTYs, and computer control. MCP intentionally does not expose `agent_run` or `agent_status`; the connected MCP client is expected to orchestrate those primitives directly.
 
 Clients supporting stateless MCP HTTP POST can use `http://127.0.0.1:3210/mcp` without authentication headers. MCP remains public even when a browser password is set. JSON-RPC notifications return HTTP 202. The implementation supports initialization, ping, tool discovery, and calls; it does not provide an SSE event stream. A cloud-hosted chat such as ChatGPT cannot reach your loopback address directly; connecting it requires a compatible trusted bridge outside this project's local server.
 
@@ -136,20 +136,20 @@ Clients supporting stateless MCP HTTP POST can use `http://127.0.0.1:3210/mcp` w
 
 MCP initialization and every tool description tell clients to read the workspace-root `Agents.md` with `read_file` before project inspection, commands, edits, or delegation. Try `AGENTS.md` when the first spelling is absent, and report when neither file exists. Read the whole file using `has_more` / `next_offset` and check applicable nested guidance before working in a subdirectory. Workspace open/list results repeat this guidance. This is a client instruction, not a server-enforced acknowledgement gate.
 
-**Every MCP tool now requires `summary`**, including workspace open/list and agent run/status. Supply a concise, nonblank paragraph of at most 1000 Unicode characters explaining what this particular call will do and why, without secrets or unverified success claims. For example, after opening a workspace:
+**Every MCP tool requires `summary`**, including workspace open/list and the resource bridge tools. Supply a concise, nonblank paragraph of at most 1000 Unicode characters explaining what this particular call will do and why, then include current task progress in the same paragraph: a score such as `Progress 60/100`, what has already been completed, and what this call advances next. Include only verified prior work in the completed portion; do not claim the current call succeeded before its result, and do not include secrets. For example, after opening a workspace:
 
 ```json
-{"workspace":"WORKSPACE_ID","path":"Agents.md","summary":"Read the project instructions before inspecting code or running tests."}
+{"workspace":"WORKSPACE_ID","path":"Agents.md","summary":"Progress 5/100 — done: workspace opened. Next: read the project instructions before inspecting code or running tests."}
 ```
 
-Missing, non-string, whitespace-only, and overlong summaries are rejected before execution with `isError: true`. A valid summary is returned as a labeled client-intent text paragraph and `structuredContent.summary`, including when execution fails. Execution results stay under `structuredContent.result`; image content blocks remain separate. The adapter removes summary metadata before dispatch, so it is not executed as code or added to a delegated prompt. Direct CLI/HTTP and internal agent tool contracts are unchanged. Reconnect clients or refresh `tools/list` after deploying the updated server so cached schemas include this required field.
+Missing, non-string, whitespace-only, and overlong summaries are rejected before execution with `isError: true`. A valid summary is request-only metadata: the adapter removes it before dispatch and does not echo it in the response. Execution results stay under `structuredContent.result`, elapsed execution time is exposed as `structuredContent.time_cost_ms`, and image content blocks remain separate. Successful calls emit one terse text status such as `Result: ok · 12 ms`; errors emit `Result: error · 3 ms` plus the error message. Direct CLI/HTTP and internal agent tool contracts are unchanged. Reconnect clients or refresh `tools/list` after deploying the updated server so cached schemas include this required field.
 
 MCP execution tools are `bash` (`command`) and `python` (`code`, Python 3), with `shell` retained as a Bash alias. Both start workspace PTYs and return `terminal_id`, `output`, `exited`, and `exit_code`. `wait_ms` waits up to 10 seconds; use `terminal_read`, `terminal_write`, and `terminal_stop` for ongoing commands. Each Python call starts a fresh interpreter; stdin stays available through `terminal_write`.
 
-Scroll at a screenshot position with this `computer` tool argument object (replace the workspace and target IDs):
+Scroll at a screenshot position with `virtual_pointer` (replace the workspace and target IDs):
 
 ```json
-{"workspace":"WORKSPACE_ID","summary":"Scroll the selected background window upward to inspect more content.","action":"scroll","window_id":123,"pid":456,"x":800,"y":500,"distance":10,"screen_width":1000,"screen_height":750}
+{"workspace":"WORKSPACE_ID","summary":"Progress 65/100 — done: selected and observed the target window. Next: scroll it upward to inspect more content.","action":"scroll","window_id":123,"pid":456,"x":800,"y":500,"distance":10,"screen_width":1000,"screen_height":600}
 ```
 
 `distance: 10` scrolls **up 10 lines**; `distance: -10` scrolls down. Accepted distance is -100 through 100. Legacy `delta` keeps its existing opposite sign (positive down); passing both is an error. Background mode requires `x,y`; desktop mode accepts `x,y` or uses the current pointer if both are omitted. Input actions return an automatic screenshot after the existing two-second settling delay.
@@ -160,16 +160,17 @@ To send an image to the MCP server, call `write_image` with a standard image blo
 {"workspace":"WORKSPACE_ID","summary":"Save the supplied image in the workspace and verify its metadata.","path":"images/input.png","image":{"type":"image","mimeType":"image/png","data":"BASE64_ENCODED_IMAGE"}}
 ```
 
-The tool validates base64, image headers/dimensions, MIME type, extension, size (20 MiB maximum), and workspace path boundaries before writing. Supported formats are PNG, JPEG, GIF, and WebP. The reply includes text metadata and a native MCP `image` content block containing the received image. `read_file` also returns image blocks for these formats, and `computer` returns PNG screenshot blocks. Input images are file uploads; no model vision request is made by `write_image`.
+The tool validates base64, image headers/dimensions, MIME type, extension, size (20 MiB maximum), and workspace path boundaries before writing. Supported formats are PNG, JPEG, GIF, and WebP. The structured result contains the image metadata, the text response stays terse, and a native MCP `image` content block contains the received image. `read_file` also returns image blocks for these formats. `get_screenshot`, `app_open`, `browser_open`, `virtual_pointer`, and `virtual_keyboard` return PNG screenshot image blocks when they observe a GUI target; every successful virtual input includes a fresh automatic observation. Input images are file uploads; no model vision request is made by `write_image`.
 
 The server negotiates MCP versions 2025-03-26, 2025-06-18, and 2025-11-25. The official Python SDK integration test covers HTTP and stdio:
 
 ```sh
 uv run --with 'mcp>=1.20,<2' tests/mcp_client.py target/debug/lessagent
 uv run --with 'mcp>=1.20,<2' --with pillow tests/computer_background.py target/debug/lessagent
+uv run --with 'mcp>=1.20,<2' --with pillow tests/native_app_virtual_tools.py target/debug/lessagent
 ```
 
-The second test requires macOS Accessibility and Screen Recording access and an installed Chrome for its isolated native event fixture. It checks typing, modifier keys, dragging, scroll direction/position, and screenshot images through the MCP SDK; it saves evidence under `output/background-control/`. The test fails if its background Chrome becomes the operating-system foreground app, including after the screenshot delay. Recipient-local document focus is recorded separately, because it is not OS foreground activation. There is no flag to waive a background failure.
+The computer-control integration tests require macOS Accessibility and Screen Recording access. `computer_background.py` uses installed Chrome for its isolated background fixture; `native_app_virtual_tools.py` launches fresh Blender and Auri instances and verifies recipient-side state changes instead of treating event posting as acceptance. It checks typing, modifier keys, dragging, scroll direction/position, and screenshot images through the MCP SDK; it saves evidence under `output/background-control/`. The test fails if its background Chrome becomes the operating-system foreground app, including after the screenshot delay. Recipient-local document focus is recorded separately, because it is not OS foreground activation. There is no flag to waive a background failure.
 
 ## Development and validation
 
@@ -193,7 +194,7 @@ node --check web/app.js
 
 The smoke test starts an isolated backend and a deterministic Codex fixture. It checks authentication and origin boundaries, project context, model discovery, tool execution, cancellation, terminal survival without a browser, MCP over HTTP/stdio, and persistence after restart. It makes no paid API calls. Use the debug binary explicitly: `python3 tests/smoke.py target/debug/lessagent`.
 
-Verified locally on macOS: Rust tests and lint, backend/CLI integration, actual Codex model discovery using the installed login, and browser mode switching, split terminals, and reload persistence. Direct Codex generation, file editing, and the test-feedback loop were also exercised using the installed login. Audio calls and permission-dependent desktop input have not been exercised. Linux checks are configured in CI; they have not been run on this macOS host.
+Verified locally on macOS: Rust tests and lint, backend/CLI integration, actual Codex model discovery using the installed login, browser mode switching, split terminals, reload persistence, and permission-dependent background GUI control through managed Chrome, Blender, and Auri. Direct Codex generation, file editing, and the test-feedback loop were also exercised using the installed login. Audio calls have not been exercised. Linux checks are configured in CI; they have not been run on this macOS host.
 
 The implementation uses Rust dependencies and plain HTML/CSS/JavaScript. `src/agent.rs` owns the agent loop, `provider.rs` provider translation, `context.rs` inventory/bundling, `terminal.rs` PTYs, `computer.rs` platform input, and `server.rs`/`mcp.rs` the interfaces. Release builds enable thin LTO and strip symbols. The macOS idle benchmark (`python3 tests/idle_performance.py target/release/lessagent DATA_DIR`) uses a disposable copy of saved data and checks CPU below 10% and physical memory footprint below 100 MB while polling state once per second.
 
@@ -220,19 +221,21 @@ Agent messages offer an expandable “What was sent to AI” view with task/syst
 
 Large job events (over 16 KiB) are archived under `events/` in the data directory. State and UI polls contain small references; the History/Agent view loads original event details when **Load details** is clicked. Existing events migrate automatically on startup. Archived terminal screens are reconstructed only for a view request and released afterward; live PTYs continue maintaining their virtual screen while their tabs are inactive. The web terminal waits for output notifications, sends input directly to the PTY, and repaints changed rows only while focused. Background project scans do not run for terminal tabs.
 
-### macOS background computer control
+### Standalone GUI tools
 
-The same `computer` implementation serves MCP (HTTP and stdio), the CLI, normal
-agents, and Light mode. Enable computer control in Settings and grant macOS
-Accessibility and Screen Recording permissions to the process running Lessagent.
+`get_screenshot` captures a read-only target image and metadata without an action argument. `virtual_pointer` handles move/click/drag/scroll; `virtual_keyboard` handles `type`+`text` or `key`+`key`. Every successful virtual input returns a fresh automatic screenshot image. `list_windows` lists existing exact targets. `app_open` opens a native app without requesting focus (Blender uses `--no-window-focus`), or reuses one unambiguous window with `new_instance:false`. Each tool retains normal workspace/summary and permission requirements. The aggregate `computer` MCP tool has been removed; internal Light-mode compatibility still uses a private aggregate executor and is not part of MCP discovery.
 
-For **Chrome**, first call the `browser_open` tool with an HTTP(S) `url`, or use
-`computer` with `action:"browser_open"`. This creates a separate background
-Chrome window with an isolated profile and a loopback-only control endpoint.
-Use the returned `window_id` and `pid` with the same `computer` tool thereafter:
+Native window coordinates come from exact-ID Accessibility geometry, not Stage Manager's distorted thumbnail bounds. Ordinary window capture uses ScreenCaptureKit; shelved windows can use a perspective-corrected **low-resolution thumbnail**, explicitly marked by `capture_quality`, `perspective_corrected` and `capture_backend` in both result and MCP image metadata. No activation or global input fallback is used to improve capture quality. See [background-control.md](docs/background-control.md) for scope, examples, and limitations.
+
+### macOS background GUI control
+
+The standalone MCP GUI tools share one native control backend with the CLI and agent runtimes; Light mode keeps a private aggregate executor for its internal `<computer>` protocol. Enable computer control in Settings and grant macOS Accessibility and Screen Recording permissions to the process running Lessagent.
+
+For **Chrome**, call the standalone `browser_open` tool with an HTTP(S) `url`; include `?purpose=texttodescribepurposeofthiswindow_by_modelname` (or `&purpose=...` if needed) so the model records why it opened that window. This creates a separate background Chrome window in the existing persistent Lessagent-managed profile by default, using a loopback-only control endpoint. If that managed Chrome process is already alive, `browser_open` reuses it and creates another controlled window; cookies/storage persist across calls.
+Use the returned `window_id`, `pid`, and actual screenshot dimensions with `virtual_pointer` and `virtual_keyboard` thereafter:
 
 ```json
-{"action":"browser_open","url":"http://127.0.0.1:4173/","width":1000,"height":750}
+{"url":"http://127.0.0.1:4173/","width":1000,"height":600}
 ```
 
 Managed Chrome uses browser-local `Input` commands with explicit button state
@@ -240,12 +243,12 @@ and a separate virtual pen pointer ID (rather than capturing the human mouse),
 not global mouse events or JavaScript-dispatched DOM events. This matters because
 Chromium's native macOS event builder samples the physical mouse's button state;
 PID-posted native drags can therefore lose the held button during movement.
-The user's ordinary browser/profile is never debug-enabled or restarted.
+The user's ordinary browser/profile is never debug-enabled or restarted; only Lessagent's managed profile is reused.
 Unmanaged Google Chrome input is rejected with an instruction to use
 `browser_open`, rather than falsely claiming reliable isolated input. Window
 screenshots and the independent virtual pointer remain native macOS features.
 Session records persist in the backend data directory, so managed windows can
-be reused after a helper or backend restart. The browser profile is separate
+be reused after a helper or backend restart. The persistent managed browser profile is separate
 from the user's normal cookies, login sessions, and extensions.
 
 Only page content is controlled through this channel. Browser title bars,
@@ -254,19 +257,20 @@ managed window are rejected rather than risking the wrong target. Open another
 controlled window to navigate independently. Other native applications continue
 to use process-directed input and require application-specific verification.
 
-For an existing native application, call `{"action":"windows"}` first, select a window, and send both its `window_id`
-and `pid` on every targeted screenshot and input action. Input without a target
+For an existing native application, call `list_windows` first, select a window, and send both its `window_id` and `pid` on every targeted `get_screenshot`, `virtual_pointer`, and `virtual_keyboard` call. Input without a target
 is **rejected on macOS**, and explicit `mode:"desktop"` is rejected too. A typo,
 missing owner, stale window, or incomplete drag must never move the shared
 pointer. There is no macOS global input backend. An initial untargeted
 screenshot remains available for read-only desktop discovery.
 
+Use the first object as `get_screenshot` arguments, pointer-action objects as `virtual_pointer` arguments, and type/key objects as `virtual_keyboard` arguments:
+
 ```json
-{"action":"screenshot","mode":"background","window_id":123,"pid":456}
+{"mode":"background","window_id":123,"pid":456}
 {"action":"click","window_id":123,"pid":456,"x":440,"y":194,"screen_width":2000,"screen_height":1500}
 {"action":"type","window_id":123,"pid":456,"text":"Hello from the background"}
 {"action":"key","window_id":123,"pid":456,"key":"cmd+a"}
-{"action":"drag","window_id":123,"pid":456,"path":[[500,220],[630,618],[291,372],[709,372],[370,618],[500,220]],"duration":3}
+{"action":"drag","window_id":123,"pid":456,"path":[[500,220],[630,518],[291,372],[709,372],[370,518],[500,220]],"duration":3}
 {"action":"scroll","window_id":123,"pid":456,"x":800,"y":500,"distance":-10}
 ```
 
@@ -281,16 +285,7 @@ destination axis keeps the starting coordinate. `duration` is 0.05–5 seconds;
 and drags preserve right-button identity. Every stroke has one content-facing
 down/up pair; release is protected by cleanup and occurs after its last move.
 
-For non-browser native applications, events use an isolated native source and
-are posted once to the specific process/window. They do not warp the system cursor, inject Command into
-ordinary clicks, activate the target through LaunchServices, or fall back to a
-global HID event stream. A short-lived AppKit responder lease makes the recipient
-accept ordinary events without bringing the target to the operating-system foreground.
-The recipient may temporarily report `document.hasFocus() == true`; this is not
-an OS foreground change. The lease is removed when the action finishes. Click a
-text field before typing. Native app menus, protected surfaces, other browser
-versions, and multi-window keyboard responders may require separate validation;
-posting an event is not a claim that every application accepted it.
+For non-browser native applications, canvas/viewport pointer actions and keyboard events use an isolated recipient-local process/window path. Ordinary left-clicks on actionable Accessibility controls can instead use exact-window `AXPress`, which lets WebKit/Catalyst-style apps accept semantic background clicks without activation. One requested click is never sent through both routes; right-clicks, drags, moves, and scrolls remain process-window events. Neither path warps the system cursor, injects Command into ordinary clicks, activates the target through LaunchServices, or falls back to global HID input. Click a text field before typing. Protected surfaces and application-specific input handling still require recipient-side verification; posting an event is not acceptance proof.
 
 A light blue virtual pointer (`#7DD4FF`) marks targeted input. It turns dark blue
 (`#2563EB`) during a left press/drag and returns to light blue after release.
@@ -305,19 +300,19 @@ overlay and screenshots use the same position and idle state. Metadata includes
 Take one explicit screenshot for the initial view. After each successful move,
 click, drag, type, key, or scroll, Lessagent waits two seconds and automatically
 captures the same target. Agent/Light captures go into the current `agent/output`
-iteration; direct calls use `agent/output/computer`. MCP returns a native PNG
+iteration; direct calls use `output/computer`. MCP returns a native PNG
 image content block alongside text metadata. HTTP and normal-agent results keep
 binary image data out of JSON text. Input and observation are serialized across
 concurrent tool calls. If capture fails after input, `screenshot_error` preserves
 that distinction: recapture rather than blindly repeating the input.
 
-Results identify the transport: `delivery:"chrome-devtools"` for managed Chrome,
-with `native_input_events_posted:0`, or the native process/window transport for
-other applications. They include `input_events_posted`, `responder_lease`,
+Results identify the transport: `delivery:"chrome-devtools"` for managed Chrome with `native_input_events_posted:0`, `delivery:"process-window"` for native recipient-local events, or `delivery:"accessibility-window"` for a semantic AXPress click. They include `input_events_posted`, `responder_lease`,
 `before` and `after` desktop state, and the automatic screenshot's `desktop` state. This exposes both immediate and delayed foreground changes.
 Human mouse movement can change sampled cursor coordinates; the controller does
-not restore/warp over the user's own movement. Windows must be on the current
-macOS desktop and not minimized, but can be behind other apps.
+not restore/warp over the user's own movement. Native input requires a valid exact Accessibility window that is not minimized.
+Stage Manager shelf visibility is not a substitute for native window identity.
+The result also records target window presentation before/after input; compare
+it as well as the foreground PID when validating background behavior.
 
 Native routing uses runtime-resolved AppKit/Quartz window-event functions.
 Unavailable support returns an error instead of silently using desktop input.
@@ -335,7 +330,7 @@ desktop input is unchanged.
 Run the background-control regression with the official MCP SDK:
 
 ```sh
-cargo build --release --locked
+cargo build --locked
 uv run --with 'mcp>=1.20,<2' --with pillow tests/computer_background.py target/debug/lessagent
 ```
 
@@ -370,10 +365,11 @@ client-coordinate guides only; it never synthesizes DOM or native input.
 
 The native regression also checks a nine-position grid at logical, Retina, and
 resized-screenshot scales, cross-track drag error, scroll target isolation, and
-the real overlay at 9, 10.4, 29, and 30.4 seconds of inactivity. It captures the
-actual pointer panel to verify that blue fill becomes transparent but the outline
-remains until the 30-second hide. Results are saved in
-`output/background-control/report.json`.
+the live overlay metadata at 9, 10.4, 29, and 30.4 seconds of inactivity. When
+macOS permits `/usr/sbin/screencapture -l` to capture the nonactivating pointer
+panel, the test also verifies its actual pixels; if that OS utility rejects the
+panel, phase/fill/visibility metadata plus target screenshot overlays remain the
+required lifecycle oracle. Results are saved in `output/background-control/report.json`.
 
 Managed Chrome geometry is obtained from the verified browser window, not from
 Quartz presentation bounds during Mission Control or Space animations. Returned
@@ -383,8 +379,8 @@ channel can address its window on another Space when native capture remains
 available. Native PID input still requires an onscreen target. No channel falls
 back to global input.
 
-Unmanaged Google Chrome windows are read-only through `computer`. Input is
-rejected with a `browser_open` instruction. Controlled Chrome uses its isolated
+Unmanaged Google Chrome windows are read-only through the standalone GUI surface. Input is
+rejected with a `browser_open` instruction. Controlled Chrome uses its managed
 virtual pointer; it never falls back to native input. Native non-Chrome apps
 retain process-targeted background input.
 

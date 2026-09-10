@@ -187,7 +187,10 @@ async fn state(
         let disk = app.disk.lock().unwrap();
         if query.get("terminal").is_some_and(|v| v == "true") {
             let workspaces: Vec<_> = disk.workspaces.iter().map(|w| json!({"id":w.id,"name":w.name,"path":w.path,"mode":w.mode,"closed":w.closed,"ui":w.ui})).collect();
-            json!({"partial":true,"workspaces":workspaces,"settings":disk.settings,"ui":disk.ui})
+            let latest_log = disk.logs.last().map(
+                |entry| json!({"at":entry["at"],"kind":entry["kind"],"message":entry["message"]}),
+            );
+            json!({"partial":true,"workspaces":workspaces,"settings":disk.settings,"ui":disk.ui,"latest_log":latest_log})
         } else {
             serde_json::to_value(&*disk).unwrap()
         }
@@ -229,10 +232,13 @@ async fn inventory(State(app): State<Arc<App>>, Path(id): Path<String>) -> Api {
 /// `tools::execute` also serves the agent loop and the MCP bridge, both of
 /// which need the encoded image for model feedback.  The browser-facing HTTP
 /// endpoint only needs the artifact path (and the dimensions already returned
-/// by `computer::action`), so remove the binary payload at this boundary.
+/// by the shared computer backend), so remove the binary payload at this boundary.
 fn strip_api_screenshot_image(name: &str, args: &Value, result: &mut Value) {
-    if matches!(name, "computer" | "browser_open")
-        && (args["action"] == "screenshot" || result["automatic_screenshot"] == true)
+    let screenshot_result = name == "get_screenshot"
+        || args["action"] == "screenshot"
+        || result["automatic_screenshot"] == true;
+    if crate::tools::is_computer_tool(name)
+        && screenshot_result
         && let Some(object) = result.as_object_mut()
     {
         object.remove("image");
@@ -650,12 +656,27 @@ mod tests {
 
     #[test]
     fn automatic_observations_drop_binary_only_at_browser_api_boundary() {
-        let mut result = json!({"ok":true,"automatic_screenshot":true,"path":"output/click.png",
+        let result = json!({"ok":true,"automatic_screenshot":true,"path":"output/click.png",
             "image":{"mime":"image/png","data":"large-base64"},"window_id":5});
-        strip_api_screenshot_image("computer", &json!({"action":"click"}), &mut result);
-        assert!(result.get("image").is_none());
-        assert_eq!(result["path"], "output/click.png");
-        assert_eq!(result["window_id"], 5);
+        for name in [
+            "computer",
+            "virtual_pointer",
+            "virtual_keyboard",
+            "app_open",
+        ] {
+            let mut value = result.clone();
+            strip_api_screenshot_image(name, &json!({"action":"click"}), &mut value);
+            assert!(value.get("image").is_none(), "{name}: {value}");
+            assert_eq!(value["path"], "output/click.png");
+            assert_eq!(value["window_id"], 5);
+        }
+        let mut screenshot = result.clone();
+        screenshot
+            .as_object_mut()
+            .unwrap()
+            .remove("automatic_screenshot");
+        strip_api_screenshot_image("get_screenshot", &json!({}), &mut screenshot);
+        assert!(screenshot.get("image").is_none());
         let mut opened = json!({"automatic_screenshot":true,"path":"output/browser.png",
             "image":{"mime":"image/png","data":"large-base64"},"pid":8});
         strip_api_screenshot_image(
