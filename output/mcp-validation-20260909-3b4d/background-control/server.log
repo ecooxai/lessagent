@@ -1,5 +1,0 @@
-Listening on all IPv4 interfaces (0.0.0.0:57940); remote browser: http://<server-address>:57940/
-App HTTP port: 57940
-MCP HTTP port: 57940 — http://127.0.0.1:57940/mcp
-Lessagent is running. Open http://127.0.0.1:57940/
-Keep this process running; closing the browser does not stop jobs.

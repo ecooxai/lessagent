@@ -4,52 +4,91 @@ import ScreenCaptureKit
 import CoreImage
 
 // Quartz window bounds may describe a Stage Manager thumbnail, not the NSWindow
-// receiving input. Resolve the exact AX window by ID (never title/order).
-func nativeWindowElement(_ native: [String: Any]) -> AXUIElement? {
+// receiving input. Resolve the exact AX window by ID (never title/order). Window
+// Server/AX state can lag briefly during Stage Manager, resize and fullscreen
+// transitions, so input geometry gets a short bounded retry before failing safe.
+private func nativeWindowElementOnce(_ native: [String: Any]) -> AXUIElement? {
     guard AXIsProcessTrusted(), let pid = native["pid"] as? Int32,
           let id = native["window_id"] as? Int,
           let symbol = dlsym(UnsafeMutableRawPointer(bitPattern: -2), "_AXUIElementGetWindow") else { return nil }
     typealias GetWindow = @convention(c) (AXUIElement, UnsafeMutablePointer<CGWindowID>) -> AXError
     let getWindow = unsafeBitCast(symbol, to: GetWindow.self)
     let app = AXUIElementCreateApplication(pid)
-    AXUIElementSetMessagingTimeout(app, 1)
-    var value: CFTypeRef?
-    guard AXUIElementCopyAttributeValue(app, kAXWindowsAttribute as CFString, &value) == .success,
-          let elements = value as? [AXUIElement] else { return nil }
-    return elements.first { element in
-        var number: CGWindowID = 0
-        return getWindow(element, &number) == .success && Int(number) == id
+    AXUIElementSetMessagingTimeout(app, 0.35)
+    var candidates = [AXUIElement]()
+    for attribute in [kAXFocusedWindowAttribute, kAXMainWindowAttribute] {
+        var value: CFTypeRef?
+        if AXUIElementCopyAttributeValue(app, attribute as CFString, &value) == .success,
+           let value, CFGetTypeID(value) == AXUIElementGetTypeID() {
+            candidates.append(value as! AXUIElement)
+        }
     }
+    var value: CFTypeRef?
+    if AXUIElementCopyAttributeValue(app, kAXWindowsAttribute as CFString, &value) == .success,
+       let elements = value as? [AXUIElement] {
+        candidates.append(contentsOf: elements)
+    }
+    var seen = Set<CGWindowID>()
+    for element in candidates {
+        var number: CGWindowID = 0
+        guard getWindow(element, &number) == .success, seen.insert(number).inserted else { continue }
+        if Int(number) == id { return element }
+    }
+    return nil
+}
+
+func nativeWindowElement(_ native: [String: Any], attempts: Int = 1) -> AXUIElement? {
+    let count = max(1, min(12, attempts))
+    for attempt in 0..<count {
+        if let element = nativeWindowElementOnce(native) { return element }
+        if attempt + 1 < count {
+            RunLoop.current.run(until: Date(timeIntervalSinceNow: 0.04))
+        }
+    }
+    return nil
 }
 
 func nativeWindowGeometry(_ native: [String: Any], required: Bool) throws -> [String: Any] {
     func unavailable() throws -> [String: Any] {
-        if required { throw Failure("Exact native window geometry unavailable. Enable Accessibility and select the window again; no input was sent") }
-        var result = native; result["geometry_source"] = "quartz-presentation"
+        if required { throw Failure("Exact native window geometry unavailable after retry. Enable Accessibility or call list_windows and select the current window_id; no input was sent") }
+        var result = native
+        result["geometry_source"] = "quartz-presentation"
+        result["geometry_attempts"] = 0
         return result
     }
-    guard let element = nativeWindowElement(native) else { return try unavailable() }
-    var position: CFTypeRef?, size: CFTypeRef?, minimized: CFTypeRef?
-    AXUIElementCopyAttributeValue(element, kAXMinimizedAttribute as CFString, &minimized)
-    if required, minimized as? Bool == true { throw Failure("Native target is minimized; no input was sent") }
-    guard AXUIElementCopyAttributeValue(element, kAXPositionAttribute as CFString, &position) == .success,
-          AXUIElementCopyAttributeValue(element, kAXSizeAttribute as CFString, &size) == .success,
-          let position = position, let size = size,
-          CFGetTypeID(position) == AXValueGetTypeID(), CFGetTypeID(size) == AXValueGetTypeID() else { return try unavailable() }
-    var point = CGPoint.zero, dimensions = CGSize.zero
-    guard AXValueGetValue(position as! AXValue, .cgPoint, &point),
-          AXValueGetValue(size as! AXValue, .cgSize, &dimensions),
-          [point.x, point.y, dimensions.width, dimensions.height].allSatisfy({ $0.isFinite }),
-          dimensions.width > 1, dimensions.height > 1,
-          dimensions.width <= 32768, dimensions.height <= 32768 else { return try unavailable() }
-    var result = native
-    for (key, value) in [("x", point.x), ("y", point.y), ("width", dimensions.width), ("height", dimensions.height)] {
-        result["presentation_" + key] = native[key]
-        result[key] = value
+    let maxAttempts = required ? 8 : 4
+    for attempt in 1...maxAttempts {
+        if let element = nativeWindowElement(native) {
+            var position: CFTypeRef?, size: CFTypeRef?, minimized: CFTypeRef?
+            AXUIElementCopyAttributeValue(element, kAXMinimizedAttribute as CFString, &minimized)
+            if required, minimized as? Bool == true { throw Failure("Native target is minimized; no input was sent") }
+            if AXUIElementCopyAttributeValue(element, kAXPositionAttribute as CFString, &position) == .success,
+               AXUIElementCopyAttributeValue(element, kAXSizeAttribute as CFString, &size) == .success,
+               let position, let size,
+               CFGetTypeID(position) == AXValueGetTypeID(), CFGetTypeID(size) == AXValueGetTypeID() {
+                var point = CGPoint.zero, dimensions = CGSize.zero
+                if AXValueGetValue(position as! AXValue, .cgPoint, &point),
+                   AXValueGetValue(size as! AXValue, .cgSize, &dimensions),
+                   [point.x, point.y, dimensions.width, dimensions.height].allSatisfy({ $0.isFinite }),
+                   dimensions.width > 1, dimensions.height > 1,
+                   dimensions.width <= 32768, dimensions.height <= 32768 {
+                    var result = native
+                    for (key, value) in [("x", point.x), ("y", point.y), ("width", dimensions.width), ("height", dimensions.height)] {
+                        result["presentation_" + key] = native[key]
+                        result[key] = value
+                    }
+                    result["geometry_source"] = "accessibility-window-id"
+                    result["geometry_attempts"] = attempt
+                    result["minimized"] = minimized as? Bool ?? false
+                    return result
+                }
+            }
+        }
+        if attempt < maxAttempts {
+            RunLoop.current.run(until: Date(timeIntervalSinceNow: 0.04))
+        }
     }
-    result["geometry_source"] = "accessibility-window-id"
-    result["minimized"] = minimized as? Bool ?? false
-    return result
+    return try unavailable()
 }
 
 // Some WebKit/Catalyst-style apps intentionally ignore process-addressed
@@ -204,14 +243,30 @@ func captureNativeWindow(_ id: Int, pid: Int32, geometry: [String:Any]) throws -
     config.width = max(1, Int(ceil(width * scale))); config.height = max(1, Int(ceil(height * scale)))
     guard config.width <= 32768, config.height <= 32768 else { throw Failure("Native capture dimensions exceed the image limit") }
     config.showsCursor = false; config.ignoreShadowsSingleWindow = true; config.ignoreGlobalClipSingleWindow = true
-    let image: CGImage = try awaitLocal(8) { box in
-        SCScreenshotManager.captureImage(contentFilter: filter, configuration: config) { image, error in
-            if let error = error { box.set(.failure(error)) }
-            else if let image = image { box.set(.success(image)) }
-            else { box.set(.failure(Failure("Native window capture returned no image"))) }
+    // Including attached windows can expand the SCK surface to a whole window
+    // family, silently scaling the selected window and invalidating coordinates.
+    // Capture only the exact requested window. Dialogs have their own IDs.
+    if #available(macOS 14.2, *) { config.includeChildWindows = false }
+    do {
+        let image: CGImage = try awaitLocal(8) { box in
+            SCScreenshotManager.captureImage(contentFilter: filter, configuration: config) { image, error in
+                if let error = error { box.set(.failure(error)) }
+                else if let image = image { box.set(.success(image)) }
+                else { box.set(.failure(Failure("Native window capture returned no image"))) }
+            }
         }
+        return (NSBitmapImageRep(cgImage: image), false)
+    } catch {
+        // SCScreenshotManager can refuse a valid background window after a
+        // WindowServer transition (SCStreamError -3811 is common). Fall back
+        // to the exact-window CGWindow image and run it through the same
+        // alpha-edge/perspective validation used for Stage Manager thumbnails.
+        // This is observation-only: callers must never replay the input action.
+        if let fallback = try? captureNativeThumbnail(id, geometry: geometry) {
+            return (fallback, true)
+        }
+        throw error
     }
-    return (NSBitmapImageRep(cgImage: image), false)
 }
 
 // LaunchServices nonactivation is honored by AppKit apps; Blender also needs its
@@ -224,7 +279,11 @@ func openNativeApplication(_ args: [String: Any]) throws -> [String: Any] {
     else {
         let filename = name.hasSuffix(".app") ? name : name + ".app"
         let folders = ["/Applications", NSHomeDirectory() + "/Applications", "/System/Applications", "/System/Applications/Utilities"]
-        url = NSWorkspace.shared.urlForApplication(withBundleIdentifier: name) ?? folders.map { URL(fileURLWithPath: $0).appendingPathComponent(filename) }.first { FileManager.default.fileExists(atPath: $0.path) }
+        // A just-launched app can be running before LaunchServices indexes its
+        // bundle ID (especially outside /Applications). Reuse its actual bundle
+        // URL instead of rejecting an otherwise unambiguous running target.
+        let runningURL = NSRunningApplication.runningApplications(withBundleIdentifier: name).compactMap { $0.bundleURL }.first
+        url = NSWorkspace.shared.urlForApplication(withBundleIdentifier: name) ?? runningURL ?? folders.map { URL(fileURLWithPath: $0).appendingPathComponent(filename) }.first { FileManager.default.fileExists(atPath: $0.path) }
     }
     guard let url = url, url.pathExtension.lowercased() == "app", let bundle = Bundle(url: url), let identifier = bundle.bundleIdentifier else { throw Failure("Installed application could not be resolved; no app was opened") }
     guard !identifier.hasPrefix("com.google.Chrome") else { throw Failure("Chrome requires browser_open and the persistent managed profile; no app was opened") }
@@ -265,4 +324,20 @@ func openNativeApplication(_ args: [String: Any]) throws -> [String: Any] {
         RunLoop.current.run(until: Date(timeIntervalSinceNow: 0.1))
     }
     throw Failure("App launched but no unique window appeared. Inspect list_windows before retrying; it was not restarted")
+}
+
+// Report the foreground application's real responder window separately from
+// Quartz's visible stacking order. This is read-only and never changes focus.
+func nativeFocusedWindowID(_ pid: Int32) -> Int {
+    guard pid > 0, AXIsProcessTrusted(),
+          let symbol = dlsym(UnsafeMutableRawPointer(bitPattern: -2), "_AXUIElementGetWindow") else { return 0 }
+    typealias GetWindow = @convention(c) (AXUIElement, UnsafeMutablePointer<CGWindowID>) -> AXError
+    let app = AXUIElementCreateApplication(pid)
+    AXUIElementSetMessagingTimeout(app, 0.15)
+    var value: CFTypeRef?
+    guard AXUIElementCopyAttributeValue(app, kAXFocusedWindowAttribute as CFString, &value) == .success,
+          let value, CFGetTypeID(value) == AXUIElementGetTypeID() else { return 0 }
+    var id: CGWindowID = 0
+    let getWindow = unsafeBitCast(symbol, to: GetWindow.self)
+    return getWindow(value as! AXUIElement, &id) == .success ? Int(id) : 0
 }

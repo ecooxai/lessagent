@@ -68,7 +68,7 @@ with tempfile.TemporaryDirectory(prefix='lessagent-background-test-', ignore_cle
         def mcp_tool(name, args, transport='mcp-http'):
             summary=(f'Progress 90/100 — done: debug build, Rust/MCP contracts, and managed Chrome split input pass. '
                      f'Next: verify {name} {args.get("action", "operation")} through {transport}.')
-            return portal.call((stdio if transport=='mcp-stdio' else http).call_tool,name,dict(workspace=workspace,summary=summary,**args))
+            return portal.call((stdio if transport=='mcp-stdio' else http).call_tool,name,dict(workspace=workspace,summary=summary,agent='gui-rollback-regression',model='test-client',main_task='Verify restored GUI tools',current_task=f'Exercise {name}',progress=70,quality=90,current_timestamp=time.strftime('%Y-%m-%dT%H:%M:%S%z'),**args))
         def split_gui(args):
             args=dict(args); action=args.get('action')
             if action == 'windows': name='list_windows'; args.pop('action')

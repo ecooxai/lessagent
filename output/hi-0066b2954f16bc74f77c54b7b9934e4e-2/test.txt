@@ -1,1 +1,0 @@
-No task-specific test supplied. Include <test>bash command</test> in the next response.

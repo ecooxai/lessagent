@@ -1,6 +1,6 @@
 # Background GUI tools
 
-Use `list_windows` to select an existing window, `get_screenshot` to observe it, `virtual_pointer` for pointer actions, and `virtual_keyboard` for text/shortcuts. The aggregate `computer` MCP tool has been removed; these standalone tools are the public GUI surface. All MCP tool calls require a workspace and a nonblank `summary`; computer control must be enabled. macOS native input requires Accessibility and capture requires Screen Recording.
+Use `list_windows` to select an existing window, `get_screenshot` to observe it, `virtual_pointer` for pointer actions, and `virtual_keyboard` for text/shortcuts. The aggregate `computer` MCP tool has been removed; these standalone tools are the public GUI surface. All GUI MCP tool calls require a workspace plus the current standalone summary, agent, model, main_task, current_task, progress, quality and current_timestamp metadata; computer control must be enabled. macOS native input requires Accessibility and capture requires Screen Recording.
 
 ## Tool boundaries
 

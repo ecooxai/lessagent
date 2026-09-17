@@ -9,7 +9,11 @@ struct Failure: Error, CustomStringConvertible {
 }
 func windows() -> [[String: Any]] {
     let entries = CGWindowListCopyWindowInfo([.optionAll, .excludeDesktopElements], kCGNullWindowID) as? [[String: Any]] ?? []
-    return entries.filter { ($0[kCGWindowLayer as String] as? Int) == 0 }.compactMap { w in
+    return entries.filter {
+        ($0[kCGWindowLayer as String] as? Int) == 0 ||
+        ($0[kCGWindowOwnerName as String] as? String == "lessagent" &&
+         $0[kCGWindowName as String] as? String == "Lessagent service alert")
+    }.compactMap { w in
         guard let bounds = w[kCGWindowBounds as String] as? NSDictionary,
               let rect = CGRect(dictionaryRepresentation: bounds), rect.width > 1, rect.height > 1 else { return nil }
         return ["window_id": w[kCGWindowNumber as String] ?? 0,
@@ -25,12 +29,16 @@ func state() -> [String: Any] {
     let frontmost = NSWorkspace.shared.frontmostApplication?.processIdentifier ?? 0
     return ["frontmost_pid": frontmost,
             "frontmost_bundle": NSWorkspace.shared.frontmostApplication?.bundleIdentifier ?? "",
+            "focused_window_id": nativeFocusedWindowID(frontmost),
             "cursor_x": p.x, "cursor_y": p.y,
             // Counts only: no key values or user text are recorded. These let
             // diagnostics distinguish concurrent human input from automation.
             "physical_left_down_count": CGEventSource.counterForEventType(.hidSystemState, eventType: .leftMouseDown),
             "physical_right_down_count": CGEventSource.counterForEventType(.hidSystemState, eventType: .rightMouseDown),
             "physical_key_down_count": CGEventSource.counterForEventType(.hidSystemState, eventType: .keyDown),
+            "physical_mouse_move_count": CGEventSource.counterForEventType(.hidSystemState, eventType: .mouseMoved),
+            "physical_left_drag_count": CGEventSource.counterForEventType(.hidSystemState, eventType: .leftMouseDragged),
+            "physical_right_drag_count": CGEventSource.counterForEventType(.hidSystemState, eventType: .rightMouseDragged),
             "front_window_id": windows().first(where: { $0["onscreen"] as? Bool == true && $0["pid"] as? Int32 == frontmost })?["window_id"] ?? 0]
 }
 enum PointerPhase: String {
@@ -146,6 +154,27 @@ final class VirtualPointer {
 }
 let virtualPointer = VirtualPointer()
 
+// Blender refreshes its event-state cursor from the physical cursor after modal
+// transforms. Restore the last *virtual*, exact-window position before keys so
+// subsequent shortcuts retain their editor context. Never query/warp HID here.
+struct NativePointerContext {
+    let pid: Int32
+    let local: CGPoint
+    let size: CGSize
+}
+var nativePointerContexts: [Int: NativePointerContext] = [:]
+func rememberNativePointer(id: Int, pid: Int32, local: CGPoint, size: CGSize) {
+    if nativePointerContexts.count >= 128 {
+        let live = windows()
+        nativePointerContexts = nativePointerContexts.filter { key, value in
+            live.contains { $0["window_id"] as? Int == key && $0["pid"] as? Int32 == value.pid }
+        }
+        if nativePointerContexts.count >= 128 { nativePointerContexts.removeAll() }
+    }
+    nativePointerContexts[id] = NativePointerContext(pid: pid, local: local, size: size)
+}
+
+
 // Background input uses two process-addressed macOS paths and never posts to the
 // global HID tap. SkyLight reaches Chromium/Catalyst surfaces that filter the
 // public PID post; the public post is retained for AppKit mouse compatibility.
@@ -162,7 +191,16 @@ func keyRecipe(_ key: String) throws -> (String, CGKeyCode, CGEventFlags) {
     var parts = key.lowercased().split(separator: "+", omittingEmptySubsequences: false).map(String.init)
     let name = parts.popLast() ?? ""
     let codes: [String: CGKeyCode] = ["a":0,"s":1,"d":2,"f":3,"h":4,"g":5,"z":6,"x":7,"c":8,"v":9,"b":11,"q":12,"w":13,"e":14,"r":15,"y":16,"t":17,"1":18,"2":19,"3":20,"4":21,"6":22,"5":23,"9":25,"7":26,"8":28,"0":29,"o":31,"u":32,"i":34,"p":35,"enter":36,"return":36,"l":37,"j":38,"k":40,"n":45,"m":46,"tab":48,"space":49,"backspace":51,"escape":53,"esc":53,"delete":117,"home":115,"end":119,"pageup":116,"pagedown":121,"left":123,"right":124,"down":125,"up":126,"f1":122,"f2":120,"f3":99,"f4":118,"f5":96,"f6":97,"f7":98,"f8":100,"f9":101,"f10":109,"f11":103,"f12":111,"f13":105,"f14":107,"f15":113,"f16":106,"f17":64,"f18":79,"f19":80,"f20":90]
-    guard let code = codes[name] else { throw Failure("Unsupported key; use type for text") }
+    let extraCodes: [String: CGKeyCode] = [
+        "minus":27,"-":27,"equal":24,"=":24,"period":47,".":47,"comma":43,",":43,
+        "slash":44,"/":44,"semicolon":41,";":41,"quote":39,"'":39,
+        "leftbracket":33,"[":33,"rightbracket":30,"]":30,"backslash":42,"grave":50,
+        "numpad0":82,"numpad1":83,"numpad2":84,"numpad3":85,"numpad4":86,
+        "numpad5":87,"numpad6":88,"numpad7":89,"numpad8":91,"numpad9":92,
+        "numpaddecimal":65,"numpadadd":69,"numpadsubtract":78,"numpadmultiply":67,
+        "numpaddivide":75,"numpadenter":76,"numpadequal":81
+    ]
+    guard let code = codes[name] ?? extraCodes[name] else { throw Failure("Unsupported key; use a named key or type for text") }
     var flags: CGEventFlags = []
     for modifier in parts {
         switch modifier {
@@ -173,6 +211,7 @@ func keyRecipe(_ key: String) throws -> (String, CGKeyCode, CGEventFlags) {
         default: throw Failure("Unknown key modifier")
         }
     }
+    if name.hasPrefix("numpad") { flags.insert(.maskNumericPad) }
     return (name, code, flags)
 }
 
@@ -275,7 +314,7 @@ func run(_ a: [String: Any]) throws -> [String: Any] {
                 try png.write(to: URL(fileURLWithPath: path))
             }
         }
-        return ["path": path, "mime": "image/png", "window_id": id, "pid": pid, "screen_width": image.pixelsWide, "screen_height": image.pixelsHigh, "logical_width": width, "logical_height": height, "coordinate_space": "window", "pointer_overlay": overlay, "pointer": virtualPointer.metadata(), "desktop": state(), "window_presentation": w, "geometry_source": targetWindow["geometry_source"] ?? "chrome-devtools", "capture_quality": thumbnail ? "thumbnail" : "full-resolution", "perspective_corrected": thumbnail, "capture_backend": controlledBrowser == nil ? (thumbnail ? "native-window-rectified-thumbnail" : "native-window") : "browser-surface-window-frame", "browser_chrome_captured": controlledBrowser == nil]
+        return ["path": path, "mime": "image/png", "window_id": id, "pid": pid, "screen_width": image.pixelsWide, "screen_height": image.pixelsHigh, "logical_width": width, "logical_height": height, "coordinate_space": "window", "pointer_overlay": overlay, "pointer": virtualPointer.metadata(), "desktop": state(), "window_presentation": w, "geometry_source": targetWindow["geometry_source"] ?? "chrome-devtools", "geometry_attempts": targetWindow["geometry_attempts"] ?? 1, "capture_quality": thumbnail ? "thumbnail" : "full-resolution", "perspective_corrected": thumbnail, "capture_backend": controlledBrowser == nil ? (thumbnail ? "native-window-rectified-thumbnail" : "native-window") : "browser-surface-window-frame", "browser_chrome_captured": controlledBrowser == nil]
     }
     guard AXIsProcessTrusted() else { throw Failure("Enable Accessibility permission for the process running Lessagent") }
     guard let locationSymbol = dlsym(UnsafeMutableRawPointer(bitPattern: -2), "CGEventSetWindowLocation") else {
@@ -311,8 +350,31 @@ func run(_ a: [String: Any]) throws -> [String: Any] {
     let recipe = action == "key" ? try keyRecipe(a["key"] as? String ?? "") : nil
     if action == "type" { guard let text = a["text"] as? String, text.utf16.count <= 16384 else { throw Failure("Invalid text") } }
     if action == "scroll" { guard a["delta"] as? Int32 != nil else { throw Failure("Missing delta") } }
+    if ["key", "type"].contains(action) { keyboardNotice.begin(a, pid: pid, windowID: id) }
     if let browser = controlledBrowser {
         return try browserControl(a, record: browser, window: targetWindow, points: points, recipe: recipe)
+    }
+    let isBlender = NSRunningApplication(processIdentifier: pid)?.bundleIdentifier == "org.blenderfoundation.blender"
+    var keyboardContext: CGPoint?
+    if isBlender && (action == "key" || action == "type") {
+        guard let saved = nativePointerContexts[id], saved.pid == pid,
+              abs(saved.size.width - width) <= 1, abs(saved.size.height - height) <= 1,
+              saved.local.x >= 0, saved.local.y >= 0,
+              saved.local.x < width, saved.local.y < height else {
+            throw Failure("Blender keyboard context is unavailable or resized. Use virtual_pointer move/click in the intended editor with the current screenshot first; no keyboard input was sent")
+        }
+        keyboardContext = saved.local
+    }
+    let pointerModifiers = a["modifiers"] as? [String] ?? []
+    var pointerFlags: CGEventFlags = []
+    for modifier in pointerModifiers {
+        switch modifier {
+        case "shift": pointerFlags.insert(.maskShift)
+        case "ctrl": pointerFlags.insert(.maskControl)
+        case "alt": pointerFlags.insert(.maskAlternate)
+        case "cmd": pointerFlags.insert(.maskCommand)
+        default: throw Failure("Invalid pointer modifier; no input was sent")
+        }
     }
     let before = state()
     // Input already carries an exact native window. Synthetic app-activation
@@ -321,6 +383,7 @@ func run(_ a: [String: Any]) throws -> [String: Any] {
     var pointer: CGPoint?
     func show(_ p: CGPoint, pressed: Bool = false) {
         pointer = CGPoint(x: p.x - origin.x, y: p.y - origin.y)
+        rememberNativePointer(id: id, pid: pid, local: pointer!, size: CGSize(width: width, height: height))
         virtualPointer.activity(window: id, pid: pid, local: pointer, origin: origin,
                                 show: a["show_pointer"] as? Bool != false, pressed: pressed,
                                 presentationPoint: CGPoint(x: (w["x"] as! NSNumber).doubleValue + pointer!.x * (w["width"] as! NSNumber).doubleValue / width,
@@ -364,6 +427,10 @@ func run(_ a: [String: Any]) throws -> [String: Any] {
         // synthetic activation/responder lease and no global fallback.
         event.postToPid(pid)
         eventsPosted += 1
+        if ["key", "type"].contains(action) {
+            if event.type == .keyDown { keyboardNotice.record("down") }
+            if event.type == .keyUp { keyboardNotice.record("up") }
+        }
     }
     func keyEvent(code: CGKeyCode, down: Bool, flags: CGEventFlags, text: String, kind: NSEvent.EventType? = nil) throws -> CGEvent {
         let event = NSEvent.keyEvent(with: kind ?? (down ? .keyDown : .keyUp), location: .zero,
@@ -381,17 +448,21 @@ func run(_ a: [String: Any]) throws -> [String: Any] {
         RunLoop.current.run(until: Date(timeIntervalSinceNow: 0.005))
     }
     let right = a["button"] as? String == "right"
-    let button: CGMouseButton = right ? .right : .left
+    let middle = a["button"] as? String == "middle"
+    let button: CGMouseButton = middle ? .center : (right ? .right : .left)
+    let downType: CGEventType = middle ? .otherMouseDown : (right ? .rightMouseDown : .leftMouseDown)
+    let upType: CGEventType = middle ? .otherMouseUp : (right ? .rightMouseUp : .leftMouseUp)
+    let dragType: CGEventType = middle ? .otherMouseDragged : (right ? .rightMouseDragged : .leftMouseDragged)
     func mouse(_ type: CGEventType, _ p: CGPoint) throws {
         let local = CGPoint(x: p.x - origin.x, y: p.y - origin.y)
-        let pressed = type == .leftMouseDown || type == .rightMouseDown || type == .leftMouseDragged || type == .rightMouseDragged
+        let pressed = type == .leftMouseDown || type == .rightMouseDown || type == .leftMouseDragged || type == .rightMouseDragged || type == .otherMouseDown || type == .otherMouseDragged
         let moved = type == .mouseMoved
         guard let e = CGEvent(mouseEventSource: source, mouseType: type,
             mouseCursorPosition: p, mouseButton: button) else {
             throw Failure("Cannot create mouse event")
         }
         setWindowLocation(e, local)
-        e.flags = [] // An ordinary click must never inherit physically-held modifiers.
+        e.flags = pointerFlags // Only explicit virtual modifiers; never inherit HID flags.
         stamp(e, 0, moved ? 2 : 3)
         stamp(e, 1, moved ? 0 : 1)
         stamp(e, 3, Int64(button.rawValue))
@@ -399,6 +470,31 @@ func run(_ a: [String: Any]) throws -> [String: Any] {
         e.setDoubleValueField(.mouseEventPressure, value: pressed ? 1 : 0)
         try postMouse(e)
         show(p, pressed: type == .leftMouseDown || type == .leftMouseDragged)
+    }
+    // A context-only motion is sent once before the keyboard request. No click,
+    // app activation, or change to the human pointer is involved. Other native
+    // apps and Chrome keep their existing input paths.
+    if let local = keyboardContext {
+        try mouse(.mouseMoved, CGPoint(x: origin.x + local.x, y: origin.y + local.y))
+        RunLoop.current.run(until: Date(timeIntervalSinceNow: 0.02))
+    }
+    let pointerModifierKeys: [(CGEventFlags, CGKeyCode)] = [(.maskShift,56),(.maskControl,59),(.maskAlternate,58),(.maskCommand,55)]
+    var heldPointerModifiers: [(CGEventFlags, CGKeyCode)] = []
+    var activePointerFlags: CGEventFlags = []
+    func releasePointerModifiers() throws {
+        while let (flag, code) = heldPointerModifiers.last {
+            activePointerFlags.remove(flag)
+            try modifierEvent(activePointerFlags, code: code)
+            heldPointerModifiers.removeLast()
+        }
+    }
+    defer { try? releasePointerModifiers() }
+    if ["move", "click", "drag", "scroll"].contains(action) {
+        for (flag, code) in pointerModifierKeys where pointerFlags.contains(flag) {
+            activePointerFlags.insert(flag)
+            heldPointerModifiers.append((flag, code))
+            try modifierEvent(activePointerFlags, code: code)
+        }
     }
     switch action {
     case "move":
@@ -410,7 +506,7 @@ func run(_ a: [String: Any]) throws -> [String: Any] {
         // click on a semantic control; canvases/viewports and right-clicks keep
         // the existing process-window event path. Never send both paths for one
         // user click.
-        if !right, let semantic = nativeAccessibilityPress(w, at: points[0]) {
+        if !right && !middle && pointerFlags.isEmpty, let semantic = nativeAccessibilityPress(w, at: points[0]) {
             accessibilityAction = semantic
             show(points[0])
             RunLoop.current.run(until: Date(timeIntervalSinceNow: 0.04))
@@ -419,8 +515,8 @@ func run(_ a: [String: Any]) throws -> [String: Any] {
             // then send one real down/up pair. No off-screen click is inserted.
             try mouse(.mouseMoved, points[0])
             RunLoop.current.run(until: Date(timeIntervalSinceNow: 0.015))
-            let down: CGEventType = right ? .rightMouseDown : .leftMouseDown
-            let up: CGEventType = right ? .rightMouseUp : .leftMouseUp
+            let down = downType
+            let up = upType
             try mouse(down, points[0])
             var released = false
             defer { if !released { try? mouse(up, points[0]) } }
@@ -434,8 +530,8 @@ func run(_ a: [String: Any]) throws -> [String: Any] {
         // sliders seeing buttons=0 during motion.
         try mouse(.mouseMoved, points[0])
         RunLoop.current.run(until: Date(timeIntervalSinceNow: 0.015))
-        let down: CGEventType = right ? .rightMouseDown : .leftMouseDown
-        let up: CGEventType = right ? .rightMouseUp : .leftMouseUp
+        let down = downType
+        let up = upType
         try mouse(down, points[0])
         var last = points[0]
         var released = false
@@ -453,7 +549,7 @@ func run(_ a: [String: Any]) throws -> [String: Any] {
                     x: points[i - 1].x + (points[i].x - points[i - 1].x) * f,
                     y: points[i - 1].y + (points[i].y - points[i - 1].y) * f
                 )
-                try mouse(right ? .rightMouseDragged : .leftMouseDragged, last)
+                try mouse(dragType, last)
                 RunLoop.current.run(until: Date(timeIntervalSinceNow: segmentTime / Double(steps)))
             }
         }
@@ -468,19 +564,45 @@ func run(_ a: [String: Any]) throws -> [String: Any] {
         // Small chunks avoid CGEvent's Unicode payload limit while preserving
         // surrogate pairs/emoji. Keyboard events keep their exact Cocoa window number.
         try modifierEvent([], code: 56) // Clear recipient-local cached modifiers, not HID state.
+        var textShiftHeld = false
+        defer { if textShiftHeld { try? modifierEvent([], code: 56) } }
         for character in text {
-            let units = Array(String(character).utf16)
+            let scalarText = String(character)
+            let shifted: [String:String] = ["!":"1","@":"2","#":"3","$":"4","%":"5","^":"6","&":"7","*":"8","(":"9",")":"0","_":"minus","+":"equal","<":"comma",">":"period","?":"slash",":":"semicolon","\"":"quote","{":"leftbracket","}":"rightbracket","|":"backslash","~":"grave"]
+            var textRecipe: (String, CGKeyCode, CGEventFlags)?
+            if isBlender, scalarText.unicodeScalars.count == 1,
+               let scalar = scalarText.unicodeScalars.first, (32...126).contains(scalar.value) {
+                let base = shifted[scalarText] ?? (scalarText == " " ? "space" : (scalarText == "\\" ? "backslash" : (scalarText == "`" ? "grave" : scalarText.lowercased())))
+                textRecipe = try? keyRecipe(base)
+                if shifted[scalarText] != nil || ("A"..."Z").contains(scalarText) {
+                    textRecipe?.2.insert(.maskShift)
+                }
+            }
+            let flags = textRecipe?.2 ?? []
+            let needsShift = flags.contains(.maskShift)
+            if textShiftHeld != needsShift {
+                try modifierEvent(needsShift ? .maskShift : [], code: 56)
+                textShiftHeld = needsShift
+            }
+            let units = Array(scalarText.utf16)
             for down in [true, false] {
-                let e = try keyEvent(code: 0, down: down, flags: [], text: String(character))
-                e.flags = []
-                units.withUnsafeBufferPointer {
-                    e.keyboardSetUnicodeString(stringLength: units.count, unicodeString: $0.baseAddress)
+                let e = try keyEvent(code: textRecipe?.1 ?? 0, down: down, flags: flags, text: scalarText)
+                e.flags = flags
+                // Blender numeric/modal handlers need MINUS/PERIOD/digit identity,
+                // not only a Unicode packet with virtual key 0. Text widgets still
+                // receive the original character via NSEvent.characters. Keep the
+                // Unicode packet route for non-ASCII and other native applications.
+                if textRecipe == nil {
+                    units.withUnsafeBufferPointer {
+                        e.keyboardSetUnicodeString(stringLength: units.count, unicodeString: $0.baseAddress)
+                    }
                 }
                 try postKeyboard(e)
                 keyboardActivity()
                 RunLoop.current.run(until: Date(timeIntervalSinceNow: 0.008))
             }
         }
+        if textShiftHeld { try modifierEvent([], code: 56); textShiftHeld = false }
     case "key":
         let (name, code, flags) = recipe!
         // Blender/GHOST and some native editors consume flagsChanged separately
@@ -506,7 +628,9 @@ func run(_ a: [String: Any]) throws -> [String: Any] {
             let function = name.hasPrefix("f") ? Int(name.dropFirst()).flatMap { (1...20).contains($0) ? $0 : nil } : nil
             let functionText = function.flatMap { UnicodeScalar(0xf703 + $0) }.map(String.init)
             let navigation: [String:String] = ["home":"\u{f729}","end":"\u{f72b}","pageup":"\u{f72c}","pagedown":"\u{f72d}"]
-            let text = special[name] ?? navigation[name] ?? functionText ?? (name.count == 1 ? (flags.contains(.maskShift) ? name.uppercased() : name) : "")
+            let punctuation: [String:String] = ["minus":"-","equal":"=","period":".","comma":",","slash":"/","semicolon":";","quote":"'","leftbracket":"[","rightbracket":"]","backslash":"\\","grave":"`","numpaddecimal":".","numpadadd":"+","numpadsubtract":"-","numpadmultiply":"*","numpaddivide":"/","numpadenter":"\r","numpadequal":"="]
+            let keypadText = name.hasPrefix("numpad") && name.count == 7 ? String(name.suffix(1)) : nil
+            let text = punctuation[name] ?? keypadText ?? special[name] ?? navigation[name] ?? functionText ?? (name.count == 1 ? (flags.contains(.maskShift) ? name.uppercased() : name) : "")
             let e = try keyEvent(code: code, down: down, flags: flags, text: text)
             e.flags = flags
             // Shortcut key equivalents keep hardware identity; plain printable
@@ -529,7 +653,7 @@ func run(_ a: [String: Any]) throws -> [String: Any] {
         let e = CGEvent(scrollWheelEvent2Source: source, units: .line, wheelCount: 1,
                         wheel1: -max(-100, min(100, delta)), wheel2: 0, wheel3: 0)
         e?.location = p
-        e?.flags = []
+        e?.flags = pointerFlags
         if let e {
             setWindowLocation(e, CGPoint(x: p.x - origin.x, y: p.y - origin.y))
             try postMouse(e)
@@ -537,6 +661,8 @@ func run(_ a: [String: Any]) throws -> [String: Any] {
     default:
         throw Failure("Unknown background computer action")
     }
+    try releasePointerModifiers()
+    if ["key", "type"].contains(action) { keyboardNotice.record("click") }
     RunLoop.current.run(until: Date(timeIntervalSinceNow: 0.04))
     let delivery = accessibilityAction == nil ? "process-window" : "accessibility-window"
     var result: [String: Any] = ["ok": true, "action": action, "mode": "background", "window_id": id, "pid": pid, "coordinate_space": "window", "pointer_color": "#7DD4FF", "pointer_pressed_color": "#2563EB", "before": before, "after": state(), "input_events_posted": eventsPosted, "delivery": delivery, "responder_lease": false, "target_was_background": wasBackground, "pointer": virtualPointer.metadata()]
@@ -544,6 +670,12 @@ func run(_ a: [String: Any]) throws -> [String: Any] {
         result["accessibility_action"] = accessibilityAction
         result["accessibility_actions_performed"] = 1
     }
+    result["context_events_posted"] = keyboardContext == nil ? 0 : 1
+    if let local = keyboardContext {
+        result["keyboard_context"] = ["window_id": id, "pid": pid, "x": local.x, "y": local.y, "source": "last-virtual-pointer"]
+    }
+    result["geometry_source"] = targetWindow["geometry_source"] ?? "chrome-devtools"
+    result["geometry_attempts"] = targetWindow["geometry_attempts"] ?? 1
     result["target_window_before"] = w
     result["target_window_after"] = windows().first { $0["window_id"] as? Int == id } ?? [:]
     if let pointer = pointer { result["virtual_pointer"] = ["x": pointer.x, "y": pointer.y] }
@@ -551,6 +683,25 @@ func run(_ a: [String: Any]) throws -> [String: Any] {
 }
 // Self-tests exercise the production clock boundaries without Accessibility.
 if CommandLine.arguments.contains("--self-test") {
+    for (name, expected): (String, CGKeyCode) in [("minus",27),("period",47),("numpad1",83),("numpaddecimal",65),("shift+f4",118)] {
+        let (_, code, _) = try keyRecipe(name)
+        precondition(code == expected, "Incorrect modeling key code: \(name)")
+    }
+    let (_, _, keypadFlags) = try keyRecipe("numpad1")
+    precondition(keypadFlags.contains(.maskNumericPad))
+    nativePointerContexts[1] = NativePointerContext(pid: 10, local: CGPoint(x: 10,y: 20),size: CGSize(width: 100,height: 100))
+    nativePointerContexts[2] = NativePointerContext(pid: 20, local: CGPoint(x: 50,y: 60),size: CGSize(width: 100,height: 100))
+    precondition(nativePointerContexts[1]?.local == CGPoint(x: 10,y: 20))
+    precondition(nativePointerContexts[2]?.pid == 20)
+    nativePointerContexts.removeAll()
+    var notice = KeyboardNoticeState()
+    notice.begin(label: "g", application: "test")
+    precondition(!notice.visible(at: 0))
+    notice.record("down", at: 10); notice.record("up", at: 10.1); notice.record("click", at: 10.2)
+    precondition(notice.phases == ["down","up","click"])
+    precondition(notice.visible(at: 15.19) && !notice.visible(at: 15.21))
+    print("PASS keyboard notice lifecycle and five-second expiry")
+
     for (idle, expected) in [(0.0, PointerPhase.active), (9.999, .active), (10.0, .transparent), (29.999, .transparent), (30.0, .hidden), (300.0, .hidden)] {
         precondition(PointerPhase.at(idle: idle) == expected, "Idle phase at \(idle)")
     }
@@ -564,11 +715,12 @@ let app = NSApplication.shared
 app.setActivationPolicy(.accessory)
 func reply(_ data: Data) {
     autoreleasepool {
-        let result: [String: Any]
+        var result: [String: Any]
         do {
             guard let args = try JSONSerialization.jsonObject(with: data) as? [String: Any] else { throw Failure("Expected JSON object") }
             result = try run(args)
         } catch { result = ["error": String(describing: error)] }
+        result["keyboard_notice"] = keyboardNotice.metadata()
         if let json = try? JSONSerialization.data(withJSONObject: result, options: [.sortedKeys]) {
             FileHandle.standardOutput.write(json)
             FileHandle.standardOutput.write(Data([10]))

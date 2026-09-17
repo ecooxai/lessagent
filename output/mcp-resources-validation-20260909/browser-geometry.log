@@ -1,4 +1,0 @@
-PASS: resource is readable while computer control is disabled; CPU/GPU/RAM and primary display are real
-PASS: both browser entrypoints reject 16 invalid/stale sizes before creating profiles or windows
-PASS: default: fitted browser size, output/ screenshots, encoded dimensions and metadata across MCP/API/file reads
-PASS: maximum: fitted browser size, output/ screenshots, encoded dimensions and metadata across MCP/API/file reads

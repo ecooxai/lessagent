@@ -1,2 +1,0 @@
-8b26fa1acf09b3646e3840a6ed4082c0e3c376768c1eb72293794b45ec81dbff  target/debug/lessagent
-8b26fa1acf09b3646e3840a6ed4082c0e3c376768c1eb72293794b45ec81dbff  output/mcp-resources/bin/lessagent-debug

@@ -225,7 +225,7 @@ def exercise():
                     f'Progress 96/100 — done: debug build, MCP contracts, managed Chrome and strict split-tool input checks pass. '
                     f'Next: verify {name} against Blender/Auri background behavior and fresh image output.'
                 )
-                result = portal.call(client.call_tool, name, dict(workspace=workspace, summary=summary, **args))
+                result = portal.call(client.call_tool, name, dict(workspace=workspace, summary=summary, agent='gui-rollback-regression', model='test-client', main_task='Verify restored GUI tools', current_task=f'Exercise {name}', progress=70, quality=90, current_timestamp=time.strftime('%Y-%m-%dT%H:%M:%S%z'), **args))
                 assert not result.isError, result
                 return result, result.structuredContent['result']
 
@@ -303,6 +303,8 @@ def exercise():
             target = dict(window_id=int(current_window['window_id']), pid=blender_pid, mode='background')
             refreshed_result, refreshed = call('get_screenshot', **target, show_pointer=False)
             image_from_result(refreshed_result, refreshed)
+            assert refreshed['geometry_source'] == 'accessibility-window-id', refreshed
+            assert int(refreshed['geometry_attempts']) >= 1, refreshed
 
             # Focus the center of the current 3D viewport, then use Blender's N
             # sidebar toggle as a keyboard acceptance oracle. Unlike deleting the
@@ -315,10 +317,14 @@ def exercise():
             after_focus = image_from_result(focus_result, focus)
             assert_background(focus, blender_pid)
             assert focus['delivery'] == 'process-window', focus
+            assert focus['geometry_source'] == 'accessibility-window-id', focus
+            assert int(focus['geometry_attempts']) >= 1, focus
             n_result, n_value = call('virtual_keyboard', **target, action='key', key='n')
             after_keyboard = image_from_result(n_result, n_value)
             assert_background(n_value, blender_pid)
             assert n_value['delivery'] == 'process-window', n_value
+            assert n_value['geometry_source'] == 'accessibility-window-id', n_value
+            assert int(n_value['geometry_attempts']) >= 1, n_value
             keyboard_energy = difference_energy(after_focus, after_keyboard)
             assert keyboard_energy > 1500, ('Blender did not visibly react to background N key', keyboard_energy)
             restore_result, restore = call('virtual_keyboard', **target, action='key', key='n')
@@ -332,6 +338,11 @@ def exercise():
                 'keyboard_image_difference': keyboard_energy,
             }
             report['checks'].append('Blender accepted background pointer + keyboard; each returned fresh PNG; foreground target isolation verified')
+
+            if '--blender-only' in sys.argv:
+                report['passed'] = True
+                report['scope'] = 'Blender only; optional Auri was not selected'
+                return report
 
             # Build a read-only AX query helper. It never performs actions; it gives
             # dynamic element centers and verifies the app changed after Lessagent input.

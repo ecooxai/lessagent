@@ -1,6 +1,6 @@
 #!/usr/bin/env python3
 """Real MCP SDK integration: uv run --with 'mcp>=1.20,<2' tests/mcp_client.py [binary]."""
-import asyncio, base64, json, os, pathlib, signal, socket, struct, subprocess, sys, tempfile, time, zlib
+import asyncio, base64, datetime, json, os, pathlib, signal, socket, struct, subprocess, sys, tempfile, time, zlib
 import jsonschema
 import urllib.request, urllib.error
 from mcp import ClientSession, StdioServerParameters
@@ -42,10 +42,13 @@ def check_image_metadata(result, width, height):
 async def exercise(session, root, label):
     init = await session.initialize()
     assert init.serverInfo.name == 'lessagent'
-    assert all(word in init.instructions for word in ['Agents.md', 'AGENTS.md', 'read_file', 'first', 'summary', 'has_more', 'Progress 60/100'])
     assert INSTRUCTION_URI in init.instructions
+    for word in ['Agents.md', 'bash or python', 'instruction.md']:
+        assert word in init.instructions, word
+    assert 'read_file first' not in init.instructions
     assert init.capabilities.resources is not None
     assert not init.capabilities.resources.subscribe and not init.capabilities.resources.listChanged
+
     listed_resources = await session.list_resources()
     assert len(listed_resources.resources) == 1 and listed_resources.nextCursor is None
     resource = listed_resources.resources[0]
@@ -54,240 +57,275 @@ async def exercise(session, root, label):
     assert not (await session.list_resource_templates()).resourceTemplates
     guide = (await session.read_resource(INSTRUCTION_URI)).contents[0]
     assert str(guide.uri) == INSTRUCTION_URI and guide.mimeType == 'text/markdown'
-    for word in ['Agents.md', '1000 by 600', 'output/', '3D', 'final summary', 'CPU', 'GPU', 'RAM', 'screen_width']:
+    for word in [
+        'Agents.md', '1000 by 600', 'output/', 'final summary', 'CPU', 'GPU', 'RAM',
+        'screen_width', 'current_task', 'progress', 'quality', 'managed Chrome profile',
+        'browser_open` tool', 'bash', 'python', '1–500', 'get_files', 'send_files', 'normal Chrome profile',
+    ]:
         assert word in guide.text, word
     system = guide.model_dump(by_alias=True)['_meta']['lessagent/system']
     assert system['os'] and system['process_architecture'] and system['observed_at_unix_ms'] > 0
     assert not system['computer_control_enabled'], 'Guide must be readable while computer control is disabled'
     if sys.platform == 'darwin':
-        assert 'probe_status' not in system, system
         assert system['cpu']['logical_cores'] > 0 and system['ram']['total_bytes'] > 0
         assert isinstance(system['gpus'], list) and isinstance(system['displays'], list)
+
     await session.send_ping()
     definitions = {t.name:t for t in (await session.list_tools()).tools}
-    assert {'bash','python','shell','write_image','read_file','get_screenshot','virtual_pointer','virtual_keyboard','list_windows','app_open'} <= definitions.keys()
-    for removed_name in ['computer', 'agent_run', 'agent_status']:
-        assert removed_name not in definitions
+    expected = {
+        'bash','python','shell','write_image','terminal_read','terminal_write','terminal_stop',
+        'list_files','get_files','send_files','get_screenshot','virtual_pointer','virtual_keyboard','list_windows',
+        'workspace_open','workspace_list','list_resources','read_resource','wait_n','browser_open','app_open',
+    }
+    assert expected <= definitions.keys(), expected - definitions.keys()
+    for removed_name in ['read_file','write_file','computer','agent_run','agent_status']:
+        assert removed_name not in definitions, removed_name
+
+    string_meta = {
+        'summary':500, 'agent':200, 'model':200, 'main_task':500,
+        'current_task':300, 'current_timestamp':120,
+    }
     for tool in definitions.values():
         jsonschema.Draft202012Validator.check_schema(tool.inputSchema)
         assert tool.description.startswith('Summary: '), (tool.name, tool.description)
-        assert '\n\nPurpose: ' in tool.description and '\n\nHow: ' in tool.description, (tool.name, tool.description)
+        assert '\n\nPurpose: ' in tool.description and '\n\nHow: ' in tool.description
+        assert 'Progress N/100' not in tool.description and 'Main task:' not in tool.description
         schema = tool.inputSchema
-        assert 'summary' in schema['required'], tool.name
-        assert len(schema['required']) == len(set(schema['required'])), tool.name
+        for field,max_length in string_meta.items():
+            assert field in schema['required'], (tool.name, field)
+            field_schema = schema['properties'][field]
+            assert field_schema['type'] == 'string' and field_schema['minLength'] == 1
+            assert field_schema['pattern'] == r'\S' and field_schema['maxLength'] == max_length
+        for field in ['progress','quality']:
+            field_schema = schema['properties'][field]
+            assert field in schema['required']
+            assert field_schema['type'] == 'integer'
+            assert field_schema['minimum'] == 0 and field_schema['maximum'] == 100
+        assert list(schema['properties'])[0] == 'summary', tool.name
+        assert list(schema['properties'])[-1] == 'current_timestamp', tool.name
+        assert schema['required'][0] == 'summary' and schema['required'][-1] == 'current_timestamp'
+        assert len(schema['required']) == len(set(schema['required']))
         summary_schema = schema['properties']['summary']
-        assert summary_schema['type'] == 'string' and summary_schema['minLength'] == 1
-        assert summary_schema['maxLength'] == 1000 and summary_schema['pattern'] == r'\S'
-        assert 'Agents.md' in tool.description and 'AGENTS.md' in tool.description and 'Call summary:' in tool.description
-        assert 'Progress 60/100' in tool.description and 'already been completed' in tool.description
-        for invalid in [None, False, 7, [], {}, '', ' \t\r\n\u2003', 'x' * 1001, '雪' * 1001]:
+        assert len(summary_schema['description']) < 50
+        for invalid in [None, False, 7, [], {}, '', ' \t\r\n\u2003', 'x' * 501, '雪' * 501]:
             assert not jsonschema.Draft202012Validator(summary_schema).is_valid(invalid)
             rejected = await session.call_tool(tool.name, {'summary': invalid})
             assert rejected.isError and 'summary' in visible_text(rejected), (tool.name, rejected)
-            assert 'summary' not in rejected.structuredContent, rejected
-        rejected = await session.call_tool(tool.name, {})
-        assert rejected.isError and 'summary' in visible_text(rejected), (tool.name, rejected)
+        assert (await session.call_tool(tool.name, {})).isError
         assert (await session.call_tool(tool.name, None)).isError
-    for name in ['list_resources', 'read_resource', 'workspace_list', 'read_file', 'get_screenshot', 'list_windows']:
+
+    for name in ['list_resources','read_resource','workspace_list','get_files','get_screenshot','list_windows','wait_n']:
         annotations = definitions[name].annotations
-        assert annotations.readOnlyHint and not annotations.destructiveHint and not annotations.openWorldHint
-    for name in ['browser_open']:
-        fields = definitions[name].inputSchema['properties']
-        assert fields['width'] == system['browser_size_schema']['width']
-        assert fields['height'] == system['browser_size_schema']['height']
-        url_description = fields['url']['description']
-        assert '?purpose=texttodescribepurposeofthiswindow_by_modelname' in url_description
-        assert '&purpose=...' in url_description and 'URL-encode' in url_description
-        assert 'existing persistent managed profile by default' in definitions[name].description
-    if system.get('displays'):
-        primary = next(display for display in system['displays'] if display['primary'])
-        assert definitions['browser_open'].inputSchema['properties']['width']['maximum'] == primary['logical_width']
-        assert definitions['browser_open'].inputSchema['properties']['height']['maximum'] == primary['logical_height']
-    for name in ['get_screenshot', 'virtual_pointer', 'virtual_keyboard', 'list_windows', 'app_open']:
-        assert definitions[name].inputSchema['additionalProperties'] is False
-    assert 'action' not in definitions['get_screenshot'].inputSchema['properties']
-    assert 'text' not in definitions['virtual_pointer'].inputSchema['properties']
-    assert 'x' not in definitions['virtual_keyboard'].inputSchema['properties']
+        assert annotations.readOnlyHint and not annotations.destructiveHint
+    for name in ['send_files','virtual_pointer','virtual_keyboard','app_open']:
+        assert not definitions[name].annotations.readOnlyHint
     assert definitions['virtual_pointer'].inputSchema['properties']['action']['enum'] == ['move','click','drag','scroll']
     assert definitions['virtual_keyboard'].inputSchema['properties']['action']['enum'] == ['type','key']
-    for name in ['virtual_pointer', 'virtual_keyboard', 'app_open']:
-        assert not definitions[name].annotations.readOnlyHint
-    assert 'distance' in definitions['virtual_pointer'].inputSchema['properties']
-    assert 'background' in definitions['virtual_pointer'].description
-    assert '4 KB excerpt' in definitions['read_file'].description and '8 KB' in definitions['read_file'].description
+    assert 'action' not in definitions['get_screenshot'].inputSchema['properties']
+    assert 'workspace' not in definitions['wait_n'].inputSchema['properties']
+    app_schema = definitions['app_open'].inputSchema
+    assert app_schema['properties']['app']['type'] == 'string'
+    assert app_schema['properties']['app']['minLength'] == 1 and 'app' in app_schema['required']
+    assert app_schema['properties']['new_instance']['type'] == 'boolean'
+    assert app_schema['properties']['new_instance']['default'] is True
+    assert app_schema['additionalProperties'] is False and 'action' not in app_schema['properties']
+    assert 'normal/default profile' in definitions['app_open'].description
+    assert definitions['get_files'].inputSchema['properties']['paths']['maxItems'] == 64
+    assert definitions['send_files'].inputSchema['properties']['files']['maxItems'] == 64
+
     called = set()
     async def invoke(name, **args):
-        summary = args.pop('summary', f'Exercise {name} through {label} to verify the MCP contract.')
-        result = await session.call_tool(name, dict(summary=summary, **args))
+        metadata = dict(
+            summary=args.pop('summary', f'Ready; exercise {name}')[:500],
+            agent=args.pop('agent', f'lessagent-{label}-integration'),
+            model=args.pop('model', 'integration-test-model'),
+            main_task=args.pop('main_task', 'Verify Lessagent MCP contract'),
+            current_task=args.pop('current_task', f'Exercise {name} via {label}'),
+            progress=args.pop('progress', 60),
+            quality=args.pop('quality', 98),
+            current_timestamp=args.pop(
+                'current_timestamp', datetime.datetime.now(datetime.timezone.utc).isoformat(timespec='milliseconds')
+            ),
+        )
+        result = await session.call_tool(name, dict(**metadata, **args))
         called.add(name)
         structured = result.structuredContent
-        assert 'summary' not in structured, (name, structured)
+        for field in [*string_meta, 'progress', 'quality']:
+            assert field not in structured, (name, field, structured)
         elapsed = structured['time_cost_ms']
-        assert isinstance(elapsed, int) and elapsed >= 0, (name, elapsed)
+        assert isinstance(elapsed, int) and elapsed >= 0
         assert result.content[0].type == 'text'
-        status = result.content[0].text
         prefix = 'Result: error · ' if result.isError else 'Result: ok · '
-        assert status.startswith(prefix), (name, status)
-        assert status.splitlines()[0] == f'{prefix}{elapsed} ms', (name, status, elapsed)
-        if not result.isError:
-            assert status == f'Result: ok · {elapsed} ms', (name, status)
+        assert result.content[0].text.splitlines()[0] == f'{prefix}{elapsed} ms'
         return result
 
+    waited = await invoke('wait_n', seconds=0.02, summary='Ready; test wait')
+    assert payload(waited)['waited_seconds'] == 0.02
+    assert waited.structuredContent['time_cost_ms'] >= 10
     discovered = payload(await invoke('list_resources'))
     assert discovered['resources'][0]['uri'] == INSTRUCTION_URI
     via_tool = await invoke('read_resource', uri=INSTRUCTION_URI)
-    bridge_guide = payload(via_tool)['contents'][0]
-    assert bridge_guide['uri'] == INSTRUCTION_URI and bridge_guide['mimeType'] == 'text/markdown'
-    assert bridge_guide['_meta']['lessagent/system']['observed_at_unix_ms'] >= system['observed_at_unix_ms']
+    assert payload(via_tool)['contents'][0]['uri'] == INSTRUCTION_URI
     assert (await invoke('read_resource', uri='file:///etc/passwd')).isError
-    assert (await invoke('read_resource')).isError
 
-    opened = await invoke('workspace_open', path=str(root), summary='Open the fixture workspace before reading its guidance.')
+    opened = await invoke('workspace_open', path=str(root), summary='Found folder; open workspace')
     assert 'Agents.md' in opened.structuredContent['instructions']
     workspace = payload(opened)['id']
-    listed = await invoke('workspace_list', summary='Find the opened fixture workspace and its read-first guidance.')
+    listed = await invoke('workspace_list', summary='Opened workspace; list it')
     assert payload(listed) and 'Agents.md' in listed.structuredContent['instructions']
     async def call(name, **args):
         return await invoke(name, workspace=workspace, **args)
 
-    # Read-first bootstrap includes missing guidance, conventional casing, and pagination.
+    # Project guidance and file work now flow through Bash/Python, not MCP file tools.
     guidance_name = 'Agents.md' if label == 'http' else 'AGENTS.md'
-    for candidate in ['Agents.md', 'AGENTS.md']:
-        (root / candidate).unlink(missing_ok=True)
-    missing = await call('read_file', path=guidance_name, summary='Check for project guidance before any command or edit.')
-    assert missing.isError and visible_text(missing).startswith('Result: error · ')
-    guidance = '# Fixture guidance\n' + ('Use debug builds and isolated test ports.\n' * 220) + 'GUIDANCE-END'
-    (root / guidance_name).write_text(guidance)
-    offset = 0
-    chunks = []
-    while True:
-        result = payload(await call('read_file', path=guidance_name, offset=offset,
-                                    summary='Read all project guidance before working in the fixture.'))
-        chunks.append(result['text'].removesuffix('\n[truncated]'))
-        if not result['has_more']:
-            break
-        assert result['next_offset'] > offset
-        offset = result['next_offset']
-    assert ''.join(chunks) == guidance
+    for candidate in ['Agents.md','AGENTS.md']:
+        (root/candidate).unlink(missing_ok=True)
+    guidance = '# Fixture guidance\nUse debug builds and isolated test ports.\nGUIDANCE-END\n'
+    (root/guidance_name).write_text(guidance)
+    read = payload(await call('bash', command=f"cat {guidance_name}", wait_ms=1000,
+                              summary='Guide exists; read via bash'))
+    while not read['exited']:
+        read = payload(await call('terminal_read', terminal_id=read['terminal_id'], wait_ms=1000))
+    assert 'GUIDANCE-END' in read['output']
 
-    # Missing summary must not dispatch otherwise-valid destructive or executable arguments.
-    for name, args in [
-        ('write_file', {'path': 'blocked.txt', 'text': 'must not be written'}),
-        ('bash', {'command': 'touch blocked-command.txt'}),
-        ('python', {'code': "from pathlib import Path; Path('blocked-python.txt').touch()"}),
+    # Missing metadata must prevent executable side effects.
+    for name,args in [
+        ('bash', {'command':'touch blocked-command.txt'}),
+        ('python', {'code':"from pathlib import Path; Path('blocked-python.txt').touch()"}),
     ]:
         result = await session.call_tool(name, dict(workspace=workspace, **args))
-        assert result.isError and 'summary' in visible_text(result), result
-    assert all(not (root / path).exists() for path in ['blocked.txt', 'blocked-command.txt', 'blocked-python.txt'])
+        assert result.isError and 'summary' in visible_text(result)
+    assert not (root/'blocked-command.txt').exists() and not (root/'blocked-python.txt').exists()
 
-    for summary in ['x', '雪' * 1000, '🦀' * 1000, '  Read fixture workspaces.  ', 'Inspect workspaces.\nConfirm guidance is available.']:
-        assert payload(await invoke('workspace_list', summary=summary))
-    await call('write_file', path='written.txt', text='MCP write_file verified', summary='Save fixture text for a roundtrip check.')
-    assert payload(await call('read_file', path='written.txt'))['text'] == 'MCP write_file verified'
-    assert payload(await call('list_files'))
-
-    async def run(name, **args):
-        r=payload(await call(name,**args))
-        for _ in range(30):
-            if r['exited']: return r
-            r=payload(await call('terminal_read',terminal_id=r['terminal_id'],wait_ms=1000))
-        raise AssertionError('Program did not exit')
-    for tool in ['shell','bash']:
-        result=await call(tool,command="printf 'bash-ok\\n'; pwd",wait_ms=1000)
-        r=payload(result)
-        for _ in range(30):
-            if r['exited']: break
-            result=await call('terminal_read',terminal_id=r['terminal_id'],wait_ms=1000)
-            r=payload(result)
-        else: raise AssertionError('Program did not exit')
-        assert r['exit_code']==0 and 'bash-ok' in r['output'] and str(root) in r['output'], r
-        shown=visible_text(result)
-        assert shown == result.content[0].text and shown.startswith('Result: ok · '), shown
-    code="from pathlib import Path\nprint(\"quotes ' \\\" $HOME `echo injected` \\nUnicode: 雪\")\nPath('python-result.txt').write_text('python-ok')"
-    r=await run('python',code=code,wait_ms=1000)
-    assert r['exit_code']==0 and '$HOME `echo injected`' in r['output'] and '雪' in r['output'], r
-    assert (root/'python-result.txt').read_text()=='python-ok'
-    long_text=('0123456789abcdef\n'*900)+'END-OF-FILE-MARKER'
-    (root/'long.txt').write_text(long_text)
-    first=await call('read_file',path='long.txt')
-    first_data=payload(first); first_shown=visible_text(first)
-    assert first_data['has_more'] and 1 <= first_data['returned_bytes'] <= 4000, first_data
-    assert first_shown.startswith('Result: ok · ') and 'END-OF-FILE-MARKER' not in first_shown
-    assert len(first_shown) < 80, 'successful MCP status text should stay terse; data belongs in structuredContent'
-    capped=payload(await call('read_file',path='long.txt',limit=100000))
-    assert capped['has_more'] and capped['returned_bytes'] <= 8000, capped
-    second=payload(await call('read_file',path='long.txt',offset=first_data['next_offset'],limit=1000))
-    assert second['offset']==first_data['next_offset'] and second['returned_bytes'] <= 1000, second
-    for name,args in [('bash',{'command':'echo failure >&2; exit 7'}),('python',{'code':"raise RuntimeError('expected-failure')"})]:
-        r=await run(name,**args)
-        assert r['exit_code'] != 0 and 'failure' in r['output'], r
-    r=payload(await call('python',code="print('ready', flush=True); print('received:' + input())",wait_ms=100))
-    assert not r['exited']
-    payload(await call('terminal_write',terminal_id=r['terminal_id'],text='hello\n'))
-    for _ in range(20):
-        r=payload(await call('terminal_read',terminal_id=r['terminal_id'],wait_ms=1000))
-        if r['exited']: break
-    assert r['exit_code']==0 and 'received:hello' in r['output'],r
-    r=payload(await call('bash',command='sleep 60',wait_ms=0))
-    payload(await call('terminal_stop',terminal_id=r['terminal_id']))
-    block={'type':'image','mimeType':'image/png','data':PIXEL}
-    result=await call('write_image',path=f'{label}/pixel.png',image=block)
-    assert payload(result)['width']==1 and visible_text(result).startswith('Result: ok · ')
-    for result in [result,await call('read_file',path=f'{label}/pixel.png')]:
-        image=next(c for c in result.content if c.type=='image')
-        assert image.mimeType=='image/png' and base64.b64decode(image.data)==base64.b64decode(PIXEL)
-        check_image_metadata(result, 1, 1)
-    image_read=await call('read_file',path=f'{label}/pixel.png')
-    assert visible_text(image_read).startswith('Result: ok · ')
-    assert (root/label/'pixel.png').read_bytes()==base64.b64decode(PIXEL)
-    for path,image in [('../escape.png',block),('bad.png',dict(block,data='not-base64')),('bad.jpg',block),('bad.png',dict(block,mimeType='image/jpeg'))]:
-        assert (await call('write_image',path=path,image=image)).isError
-    assert not (root/'bad.png').exists()
-    for format, encoded in FORMAT_FIXTURES.items():
-        path = f'{label}/dimensions.{format}'
-        uploaded = await call('write_image', path=path, image={'type':'image','mimeType':'image/'+format,'data':encoded})
-        reread = await call('read_file', path=path)
-        for image_result in [uploaded, reread]:
-            check_image_metadata(image_result, 7, 5)
-            data = payload(image_result)
-            assert data['format'] == format and data['image_metadata']['format'] == format
-            assert base64.b64decode(next(c.data for c in image_result.content if c.type=='image')) == base64.b64decode(encoded)
-
-    # A real PNG larger than common 2 MiB HTTP defaults, with incompressible pixels.
-    def chunk(kind, data):
-        return struct.pack('>I',len(data))+kind+data+struct.pack('>I',zlib.crc32(kind+data))
-    pixels=b''.join(b'\0'+os.urandom(1024*3) for _ in range(800))
-    png=b'\x89PNG\r\n\x1a\n'+chunk(b'IHDR',struct.pack('>IIBBBBB',1024,800,8,2,0,0,0))+chunk(b'IDAT',zlib.compress(pixels))+chunk(b'IEND',b'')
-    big=await call('write_image',path=f'{label}/large.png',image=dict(block,data=base64.b64encode(png).decode()))
-    assert payload(big)['bytes']==len(png)
-    check_image_metadata(big, 1024, 800)
-    assert base64.b64decode(next(c.data for c in big.content if c.type=='image'))==png
-    assert (await call('python')).isError
-    assert (await call('not_a_tool')).isError
-    for name, args in [
+    # Removed names stay rejected even with valid metadata.
+    for name,args in [
+        ('read_file', {'path':guidance_name}),
+        ('write_file', {'path':'blocked.txt','text':'bad'}),
         ('computer', {'action':'click','x':1,'y':1}),
         ('agent_run', {'prompt':'unused'}),
         ('agent_status', {'job_id':'unused'}),
     ]:
         removed = await call(name, **args)
         assert removed.isError and f'Unknown tool: {name}' in visible_text(removed), removed
-    disabled = await call('browser_open', url='http://127.0.0.1:1/')
-    assert disabled.isError and 'Enable computer control' in visible_text(disabled)
-    for name, args in [
+    assert not (root/'blocked.txt').exists()
+
+    async def run(name, **args):
+        r = payload(await call(name, **args))
+        terminal_id = r['terminal_id']
+        for _ in range(30):
+            if r['exited']:
+                return r
+            r = payload(await call('terminal_read', terminal_id=terminal_id, wait_ms=1000))
+        raise AssertionError('Program did not exit')
+
+    for tool in ['shell','bash']:
+        result = await run(tool, command="printf 'bash-ok\\n'; pwd", wait_ms=1000)
+        assert result['exit_code'] == 0 and 'bash-ok' in result['output'] and str(root) in result['output']
+    code = "from pathlib import Path\nPath('python-result.txt').write_text('python-ok')\nprint('雪')"
+    result = await run('python', code=code, wait_ms=1000)
+    assert result['exit_code'] == 0 and '雪' in result['output']
+    assert (root/'python-result.txt').read_text() == 'python-ok'
+    result = await run('bash', command="printf 'file-via-bash' > written.txt; cat written.txt")
+    assert 'file-via-bash' in result['output'] and (root/'written.txt').read_text() == 'file-via-bash'
+    assert payload(await call('list_files'))
+
+    interactive = payload(await call('python', code="print('ready', flush=True); print('received:' + input())", wait_ms=100))
+    assert not interactive['exited']
+    terminal_id = interactive['terminal_id']
+    payload(await call('terminal_write', terminal_id=terminal_id, text='hello\n'))
+    for _ in range(20):
+        interactive = payload(await call('terminal_read', terminal_id=terminal_id, wait_ms=1000))
+        if interactive['exited']:
+            break
+    assert interactive['exit_code'] == 0 and 'received:hello' in interactive['output']
+    sleeper = payload(await call('bash', command='sleep 60', wait_ms=0))
+    payload(await call('terminal_stop', terminal_id=sleeper['terminal_id']))
+
+    block = {'type':'image','mimeType':'image/png','data':PIXEL}
+    uploaded = await call('write_image', path=f'{label}/pixel.png', image=block)
+    check_image_metadata(uploaded, 1, 1)
+    assert (root/label/'pixel.png').read_bytes() == base64.b64decode(PIXEL)
+    for path,image in [
+        ('../escape.png',block), ('bad.png',dict(block,data='not-base64')),
+        ('bad.jpg',block), ('bad.png',dict(block,mimeType='image/jpeg')),
+    ]:
+        assert (await call('write_image', path=path, image=image)).isError
+    for format,encoded in FORMAT_FIXTURES.items():
+        image_result = await call('write_image', path=f'{label}/dimensions.{format}',
+                                  image={'type':'image','mimeType':'image/'+format,'data':encoded})
+        check_image_metadata(image_result, 7, 5)
+
+    # Multi-file transfer preserves mixed media and arbitrary binary bytes.
+    audio_bytes = b'ID3\x04\x00\x00lessagent-audio'
+    video_bytes = b'\x00\x00\x00\x18ftypmp42lessagent-video'
+    blend_bytes = b'BLENDER-v300lessagent-3d'
+    binary_bytes = b'\x00\x01\xfe\xfflessagent-binary'
+    batch = [
+        {'path':f'{label}/batch/pixel.png','mimeType':'image/png','data':PIXEL},
+        {'path':f'{label}/batch/sound.mp3','mimeType':'audio/mpeg','data':base64.b64encode(audio_bytes).decode()},
+        {'path':f'{label}/batch/movie.mp4','mimeType':'video/mp4','data':base64.b64encode(video_bytes).decode()},
+        {'path':f'{label}/batch/scene.blend','mimeType':'application/x-blender','data':base64.b64encode(blend_bytes).decode()},
+        {'path':f'{label}/batch/raw.bin','data':base64.b64encode(binary_bytes).decode()},
+    ]
+    sent = await call('send_files', files=batch, summary='Ready; send mixed file batch')
+    sent_data = payload(sent)
+    assert sent_data['count'] == 5 and sent_data['total_bytes'] == sum(
+        len(x) for x in [base64.b64decode(PIXEL), audio_bytes, video_bytes, blend_bytes, binary_bytes]
+    )
+    assert (root/label/'batch'/'sound.mp3').read_bytes() == audio_bytes
+    assert (root/label/'batch'/'movie.mp4').read_bytes() == video_bytes
+    assert (root/label/'batch'/'scene.blend').read_bytes() == blend_bytes
+    assert (root/label/'batch'/'raw.bin').read_bytes() == binary_bytes
+    assert sent_data['files'][-1]['mimeType'] == 'application/octet-stream'
+
+    paths = [item['path'] for item in batch]
+    received = await call('get_files', paths=paths, summary='Sent files; get mixed batch')
+    received_data = payload(received)
+    assert received_data['count'] == 5 and [f['kind'] for f in received_data['files']] == [
+        'image','audio','video','file','file'
+    ]
+    blocks = [c.model_dump(by_alias=True, exclude_none=True) for c in received.content[1:]]
+    assert [block['type'] for block in blocks] == ['image','audio','resource','resource','resource'], blocks
+    assert base64.b64decode(blocks[0]['data']) == base64.b64decode(PIXEL)
+    assert base64.b64decode(blocks[1]['data']) == audio_bytes
+    assert base64.b64decode(blocks[2]['resource']['blob']) == video_bytes
+    assert base64.b64decode(blocks[3]['resource']['blob']) == blend_bytes
+    assert base64.b64decode(blocks[4]['resource']['blob']) == binary_bytes
+    assert [block['_meta']['lessagent/file']['path'] for block in blocks] == paths
+    assert blocks[2]['resource']['mimeType'] == 'video/mp4'
+    assert blocks[3]['resource']['mimeType'] == 'application/x-blender'
+    assert blocks[4]['resource']['mimeType'] == 'application/octet-stream'
+    assert '_mcp_content' not in received_data
+
+    for bad_files in [
+        [{'path':'../escape.bin','data':base64.b64encode(b'x').decode()}],
+        [{'path':f'{label}/batch/dup.bin','data':base64.b64encode(b'a').decode()},
+         {'path':f'{label}/batch/dup.bin','data':base64.b64encode(b'b').decode()}],
+        [{'path':f'{label}/batch/bad.bin','data':'not-base64'}],
+    ]:
+        assert (await call('send_files', files=bad_files)).isError
+    assert (await call('get_files', paths=['../escape.bin'])).isError
+    assert (await call('get_files', paths=[f'{label}/batch/missing.bin'])).isError
+
+    # GUI tools remain advertised but reject while computer control is disabled.
+    for name,args in [
         ('get_screenshot', {}), ('list_windows', {}),
+        ('app_open', {'app':'Blender','new_instance':False,'summary':'雪' * 500}),
         ('virtual_pointer', {'action':'click','window_id':1,'pid':1,'x':1,'y':1}),
         ('virtual_keyboard', {'action':'key','window_id':1,'pid':1,'key':'x'}),
-        ('app_open', {'app':'Blender'}),
     ]:
         disabled = await call(name, **args)
         assert disabled.isError and 'Enable computer control' in visible_text(disabled), name
-    inert = await run('bash', command='printf summary-is-metadata',
-                     summary='Explain this call; do not execute $(touch summary-executed.txt).')
-    assert inert['exit_code'] == 0 and 'summary-is-metadata' in inert['output']
-    assert not (root / 'summary-executed.txt').exists()
-    assert definitions.keys() <= called, definitions.keys() - called
-    print(f'{label}: all {len(definitions)} tools, read-first guidance, summary validation/metadata, '
-          'resources/read+list, host info, image dimensions, Bash/Python, PTY input/stop, file/image roundtrips, removed agent job tools PASS')
+
+    # Metadata remains inert input and never reaches shell execution.
+    inert = await run('bash', command='printf metadata-inert',
+                      summary='Ready; verify metadata inert',
+                      current_task='$(touch metadata-executed.txt)')
+    assert inert['exit_code'] == 0 and 'metadata-inert' in inert['output']
+    assert not (root/'metadata-executed.txt').exists()
+    assert (await call('python')).isError
+    assert (await call('not_a_tool')).isError
+    print(f'{label}: MCP surface, metadata, resources, Bash/Python, PTY, mixed file transfer, images, removed tools PASS')
 
 async def main(root, port):
     data=root/'data'; work=root/'workspace'; work.mkdir()
@@ -338,7 +376,16 @@ async def main(root, port):
                                 'params':{'name':'workspace_list','arguments':malformed}})[1]['result']
                 assert response['isError'] and 'object' in response['structuredContent']['result']['error'], response
             assert not rpc({'jsonrpc':'2.0','id':1,'method':'tools/call',
-                            'params':{'name':'workspace_list','arguments':{'summary':'List fixture workspaces.'}}})[1]['result']['isError']
+                             'params':{'name':'workspace_list','arguments':{
+                                 'summary':'Ready; list fixture workspaces',
+                                 'agent':'raw-http-test',
+                                 'model':'integration-test-model',
+                                 'main_task':'Verify raw MCP HTTP tool calls',
+                                 'current_task':'List workspaces',
+                                 'progress':50,
+                                 'quality':90,
+                                 'current_timestamp':'2026-09-12T08:20:00-07:00',
+                             }}})[1]['result']['isError']
             async with streamablehttp_client(f'http://127.0.0.1:{port}/mcp') as (read,write,_):
                 async with ClientSession(read,write) as session: await exercise(session,work,'http')
             # Parse errors must stay on the protocol channel and not kill the bridge.

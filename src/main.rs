@@ -1,6 +1,13 @@
 use lessagent::{Result, err};
 use serde_json::{Value, json};
 use tokio::io::{AsyncBufReadExt, AsyncWriteExt, BufReader};
+
+const DEFAULT_COMMAND: &str = "launch";
+
+fn command_name(args: &[String]) -> &str {
+    args.first().map(String::as_str).unwrap_or(DEFAULT_COMMAND)
+}
+
 fn data_dir() -> std::path::PathBuf {
     std::env::var_os("LESSAGENT_DATA_DIR")
         .map(Into::into)
@@ -47,10 +54,15 @@ async fn run() -> Result<()> {
             }
         }
     }
-    let command = args.first().map(String::as_str).unwrap_or("launch");
+    let command = command_name(&args);
+    if command == "build-info" {
+        println!("{}", lessagent::build_info());
+        return Ok(());
+    }
     if ["help", "--help", "-h"].contains(&command) {
         println!(
-            "Lessagent — persistent local computer agent\n\n  lessagent [start|tui|restart] [--port 3210] [--data-dir DIR] [--passwd PASSWORD]\n  lessagent stop [--port 3210] [--data-dir DIR]\n  lessagent serve [--port 3210] [--data-dir DIR] [--passwd PASSWORD]\n  lessagent open PATH\n  lessagent run PATH PROMPT...\n  lessagent status\n  lessagent models codex|openai|gemini|claude\n  lessagent tool WORKSPACE_ID NAME JSON_ARGUMENTS\n  lessagent mcp\n\nRun lessagent to start and choose CLI, browser UI, or neither. Clients use the same --port and --data-dir (or LESSAGENT_PORT / LESSAGENT_DATA_DIR). API keys: OPENAI_API_KEY, ANTHROPIC_API_KEY, GEMINI_API_KEY. Codex uses codex login file credentials for direct HTTP requests."
+            "Lessagent — persistent local computer agent\n\n  lessagent [--port 3210] [--data-dir DIR] [--passwd PASSWORD]
+  lessagent start|tui|restart [--port 3210] [--data-dir DIR] [--passwd PASSWORD]\n  lessagent stop [--port 3210] [--data-dir DIR]\n  lessagent serve [--port 3210] [--data-dir DIR] [--passwd PASSWORD]\n  lessagent open PATH\n  lessagent run PATH PROMPT...\n  lessagent status\n  lessagent service-check [--base-url URL]\n  lessagent models codex|openai|gemini|claude\n  lessagent tool WORKSPACE_ID NAME JSON_ARGUMENTS\n  lessagent mcp\n\nRun lessagent to start/connect the backend and open the native Lessagent service window. Use its Browser UI button for the web interface. Clients use the same --port and --data-dir (or LESSAGENT_PORT / LESSAGENT_DATA_DIR). API keys: OPENAI_API_KEY, ANTHROPIC_API_KEY, GEMINI_API_KEY. Codex uses codex login file credentials for direct HTTP requests."
         );
         return Ok(());
     }
@@ -79,6 +91,19 @@ async fn run() -> Result<()> {
         return Err(err(
             "Use --passwd with start, restart, tui, serve, or no command",
         ));
+    }
+    if command == "service-check" {
+        let base_url = args
+            .iter()
+            .position(|arg| arg == "--base-url")
+            .map(|index| {
+                args.get(index + 1)
+                    .cloned()
+                    .ok_or_else(|| err("--base-url requires a value"))
+            })
+            .transpose()?
+            .unwrap_or_else(|| format!("http://127.0.0.1:{port}"));
+        return lessagent::service_checker::run(dir, base_url);
     }
     let client = reqwest::Client::new();
     let base = format!("http://127.0.0.1:{port}");
@@ -329,38 +354,8 @@ async fn launch(
     if mode != "launch" {
         return Ok(());
     }
-    use std::io::{IsTerminal, Write};
-    if !std::io::stdin().is_terminal() || !std::io::stdout().is_terminal() {
-        println!("Backend ready. Use lessagent tui for CLI, or open {base}/ in a browser.");
-        return Ok(());
-    }
-    loop {
-        print!("Open [c] CLI, [b] browser UI, or [n] neither? [n]: ");
-        std::io::stdout().flush()?;
-        let mut answer = String::new();
-        std::io::stdin().read_line(&mut answer)?;
-        match answer.trim().to_ascii_lowercase().as_str() {
-            "c" | "cli" | "tui" | "1" => return lessagent::tui::run(&base, &token).await,
-            "b" | "browser" | "2" => {
-                let opener = if cfg!(target_os = "macos") {
-                    "open"
-                } else {
-                    "xdg-open"
-                };
-                let status = std::process::Command::new(opener)
-                    .arg(format!("{base}/"))
-                    .status()?;
-                if !status.success() {
-                    return Err(err(format!(
-                        "Could not open browser; open {base}/ manually"
-                    )));
-                }
-                return Ok(());
-            }
-            "" | "n" | "no" | "neither" | "3" => return Ok(()),
-            _ => println!("Choose c, b, or n."),
-        }
-    }
+    println!("Opening native Lessagent window.");
+    lessagent::service_checker::run(dir, base)
 }
 
 async fn stop_backend(dir: &std::path::Path, port: u16) -> Result<()> {
@@ -448,4 +443,15 @@ fn stop_legacy_backend(dir: &std::path::Path, port: u16) -> Result<()> {
     }
     println!("Stopping older Lessagent backend (PID {}).", matches[0]);
     Ok(())
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn no_subcommand_defaults_to_native_launch() {
+        assert_eq!(command_name(&[]), "launch");
+        assert_eq!(command_name(&["start".into()]), "start");
+    }
 }

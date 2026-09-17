@@ -9,6 +9,7 @@ pub mod mcp;
 pub mod provider;
 pub mod resources;
 pub mod server;
+pub mod service_checker;
 pub mod state;
 pub mod terminal;
 pub mod tools;
@@ -54,4 +55,14 @@ pub fn tail(text: &str, max: usize) -> String {
         start += 1;
     }
     format!("[earlier output truncated]\n{}", &text[start..])
+}
+
+/// Identifies the code compiled into this process (not a newer file on disk).
+pub fn build_info() -> serde_json::Value {
+    serde_json::json!({
+        "source_id": env!("LESSAGENT_BUILD_ID"),
+        "profile": env!("LESSAGENT_BUILD_PROFILE"),
+        "native_helper_id": option_env!("LESSAGENT_HELPER_BUILD_ID"),
+        "version": env!("CARGO_PKG_VERSION")
+    })
 }

@@ -247,9 +247,16 @@ impl Terminal {
         Ok(())
     }
 }
+#[derive(Clone)]
+struct TerminalConnection {
+    port: u16,
+    data_dir: PathBuf,
+    binary: PathBuf,
+}
 pub struct TerminalManager {
     sessions: Mutex<HashMap<String, Arc<Terminal>>>,
     dir: PathBuf,
+    connection: Mutex<Option<TerminalConnection>>,
 }
 impl TerminalManager {
     pub fn new(dir: PathBuf) -> Result<Self> {
@@ -312,6 +319,7 @@ impl TerminalManager {
         Ok(Self {
             sessions: Mutex::new(sessions),
             dir,
+            connection: Mutex::new(None),
         })
     }
     pub fn get(&self, id: &str) -> Result<Arc<Terminal>> {
@@ -350,6 +358,14 @@ impl TerminalManager {
         });
         list
     }
+    pub fn set_connection(&self, port: u16, data_dir: PathBuf, binary: PathBuf) {
+        *self.connection.lock().unwrap() = Some(TerminalConnection {
+            port,
+            data_dir,
+            binary,
+        });
+    }
+
     pub fn spawn(
         &self,
         workspace: &str,
@@ -389,6 +405,12 @@ impl TerminalManager {
         cmd.cwd(cwd);
         cmd.env("TERM", "xterm-256color");
         cmd.env("PS1", "\\w $ ");
+        cmd.env("LESSAGENT_WORKSPACE_ID", workspace);
+        if let Some(connection) = self.connection.lock().unwrap().clone() {
+            cmd.env("LESSAGENT_PORT", connection.port.to_string());
+            cmd.env("LESSAGENT_DATA_DIR", connection.data_dir);
+            cmd.env("LESSAGENT_BIN", connection.binary);
+        }
         // Provider and backend credentials must not be inherited by arbitrary commands.
         for key in [
             "OPENAI_API_KEY",

@@ -1,2 +1,0 @@
-http: handshake, schemas, Bash/Python, PTY input/stop, errors, image roundtrip PASS
-stdio: handshake, schemas, Bash/Python, PTY input/stop, errors, image roundtrip PASS

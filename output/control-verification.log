@@ -1,9 +1,0 @@
-PASS input left click mcp-http
-PASS input left click mcp-stdio
-PASS input left click api
-PASS check left click exactly once / normal API + both MCP transports
-PASS input right click mcp-http
-PASS check right click / correct button mask / release
-PASS input accuracy grid 1 / logical mcp-http
-PASS input accuracy grid 2 / logical mcp-stdio
-PASS input accuracy grid 3 / logical api

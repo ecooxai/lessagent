@@ -1,8 +1,0 @@
-Installed 29 packages in 40ms
-Traceback (most recent call last):
-  File "/Users/ecoo/project/agent/lessagent/tests/computer_background.py", line 117, in <module>
-    input_action(action='click',x=220,y=97)
-  File "/Users/ecoo/project/agent/lessagent/tests/computer_background.py", line 114, in input_action
-    assert r['before']['frontmost_pid']==r['after']['frontmost_pid'], 'Input stole foreground focus'
-           ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
-AssertionError: Input stole foreground focus

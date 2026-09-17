@@ -35,7 +35,7 @@ with tempfile.TemporaryDirectory() as directory:
     with socket.socket() as sock:
         sock.bind(('127.0.0.1',0)); port=sock.getsockname()[1]
     args=[str(binary),'--port',str(port),'--data-dir',directory]
-    for operation in [('stop',),('restart','--passwd','migration password'),('--passwd','migration password')]:
+    for operation in [('stop',),('restart','--passwd','migration password'),('start','--passwd','migration password')]:
         old=subprocess.Popen([sys.executable,'-c',fixture,directory,str(port)])
         try:
             for _ in range(100):
@@ -52,4 +52,4 @@ with tempfile.TemporaryDirectory() as directory:
         finally:
             if old.poll() is None: old.terminate(); old.wait()
             subprocess.run(args+['stop'],capture_output=True,timeout=15)
-print('PASS: legacy stop, restart, and password-only launch with custom port/data directory')
+print('PASS: legacy stop, restart, and password-protected start with custom port/data directory')

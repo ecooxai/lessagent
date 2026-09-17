@@ -8,6 +8,7 @@
     <script src="/app.js" defer></script>
   </head>
   <body>
+    <div id="dev-badge" hidden>dev</div>
     <dialog id="login-dialog" aria-labelledby="login-title">
       <form id="login-form">
         <h2 id="login-title">Sign in to Lessagent</h2>
@@ -23,7 +24,7 @@
       <div id="workspaces"></div>
       <div class="sidebar-bottom">
         <button id="context" title="Project context"></button>
-        <div class="sidebar-tools"><button id="settings-nav" title="Settings" aria-label="Settings">⚙</button><button id="logs-nav" title="Backend logs" aria-label="Backend logs">≡</button><span id="connection" title="Connecting…">○</span></div>
+        <div class="sidebar-tools"><button id="settings-nav" title="Settings" aria-label="Settings">⚙</button><button id="logs-nav" title="Backend logs" aria-label="Backend logs">≡</button><button id="service-check-nav" title="Service checker" aria-label="Service checker">◉</button><span id="connection" title="Connecting…">○</span></div>
       </div>
     </aside>
     <main>

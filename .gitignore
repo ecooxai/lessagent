@@ -1,6 +1,17 @@
 /target/
+# Generated output and common build directories
+/output/
+/build/
+/dist/
+/out/
+/coverage/
+/.cache/
+/node_modules/
 /agent/context/
 /agent/knowledge/done/
 /agent/captures/
 .env
 .DS_Store
+
+__pycache__/
+*.py[cod]

@@ -1,3 +1,0 @@
-Debug MCP integration: binary=/Users/ecoo/project/agent/lessagent/target/debug/lessagent, isolated port=64666
-http: all 18 tools, read-first guidance, summary validation/metadata, resources/read+list, host info, image dimensions, Bash/Python, PTY input/stop, file/image roundtrips, local agent run/status PASS
-stdio: all 18 tools, read-first guidance, summary validation/metadata, resources/read+list, host info, image dimensions, Bash/Python, PTY input/stop, file/image roundtrips, local agent run/status PASS

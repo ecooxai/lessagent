@@ -54,7 +54,13 @@ DEV_DATA="$(mktemp -d "${TMPDIR:-/tmp}/lessagent-dev.XXXXXX")"
 # Ctrl-C stops this foreground test backend, not the normal backend.
 ```
 
-The equivalent build-and-run command is:
+For an app-style debug launch, plain `cargo run` runs the default Lessagent launch mode: it starts or connects to the backend service and opens the standalone native service-monitor window. During development, still pass an isolated port/data directory after `--`:
+
+```sh
+cargo run --locked -- --port 33210 --data-dir "$DEV_DATA"
+```
+
+For a headless foreground backend instead, use:
 
 ```sh
 cargo run --locked -- serve --port 33210 --data-dir "$DEV_DATA"
@@ -97,35 +103,33 @@ done
 For computer-control changes, also run:
 
 ```sh
-uv run --with 'mcp>=1.20,<2' tests/browser_geometry.py target/debug/lessagent
+# On a local macOS development machine, cargo test automatically runs the
+# deterministic managed-Chrome pointer regression. CI/headless runs skip
+# that GUI/TCC test; LESSAGENT_SKIP_GUI_TESTS=1 is the explicit local escape hatch.
+cargo test --locked
 uv run --with 'mcp>=1.20,<2' tests/browser_profile_virtual_tools.py target/debug/lessagent
-uv run --with 'mcp>=1.20,<2' --with pillow tests/computer_background.py target/debug/lessagent
 uv run --with 'mcp>=1.20,<2' --with pillow tests/native_app_virtual_tools.py target/debug/lessagent
+# Launch/reuse only: owned AppKit fixture, no personal apps or input.
+uv run --with 'mcp>=1.20,<2' tests/app_open_mcp.py target/debug/lessagent
+# Real mesh operations + Chrome circle, also in the local cargo test integration:
+python3 tests/background_modeling.py target/debug/lessagent
 ```
 
-These native integration tests need Chrome plus macOS Accessibility and Screen Recording permissions. Keep the shared pointer and user's normal browser/profile untouched; browser_open may reuse only the persistent Lessagent-managed profile. Missing permissions or unavailable dependencies must be reported as blockers, not passes. Do not weaken assertions or use placeholder verification. Report exact commands, results, and any untested behavior; retain useful failure evidence separately from source.
+`browser_open` and `app_open` are restored public MCP tools. Use `browser_open` for a new controlled Chrome window with the existing persistent Lessagent-managed profile; `new_profile:true` explicitly requests a separate blank managed profile. Personal Chrome profile data is never copied or changed. Use `app_open` for native apps, including Blender's `--no-window-focus` launch. The restored launcher defaults to a new instance; `new_instance:false` reuses one unambiguous existing window. Reuse exact returned window IDs/PIDs and screenshot dimensions for `virtual_pointer` / `virtual_keyboard`. Do not substitute raw shell launching or a native Chrome input fallback. See `docs/instruction.md`.
 
 ## MCP contract
 
 Read the server resource `lessagent://server/instruction.md` through standard MCP `resources/list` / `resources/read`, or the read-only `list_resources` / `read_resource` tools for tool-only clients. These bootstrap operations do not require a workspace or computer control enabled. The resource includes freshly read OS, CPU, GPU, RAM, all macOS displays (logical/backing-pixel/visible sizes), and workflow rules. It excludes credentials, serial numbers, user/host names and window contents. Refresh it and `tools/list` after display changes. Native resource operations do not take summary; the two tool bridges do.
 
-Use `browser_open` (not `open_browser`) for a new background Chrome window backed by the existing persistent Lessagent-managed profile by default; create a managed profile only when none exists. Put a short model-authored purpose in the URL using `?purpose=texttodescribepurposeofthiswindow_by_modelname`, or append `&purpose=...` to an existing query string, URL-encoding the value. Default dimensions are 1000 by 600 logical points, reduced to fit smaller displays. Schema maxima follow the current primary display's logical resolution; runtime and native launch validate again. The actual window is centered/fitted to the visible work area, never enlarged to Retina pixel dimensions. The standalone `browser_open` tool enforces this rule. Inspect returned `browser_size` and actual screenshot dimensions rather than assuming the requested size.
-
-Use standalone `list_windows`, `get_screenshot`, `virtual_pointer`, and `virtual_keyboard` for MCP GUI work; the aggregate `computer` MCP tool is removed. MCP also does not expose `agent_run` or `agent_status`; the MCP client is already the orchestrating agent and should use the project primitives directly. `app_open` opens a native app without requesting focus, with Blender's `--no-window-focus` flag; `new_instance:false` reuses one unambiguous window. Native events use exact Cocoa window IDs and AX geometry with no synthetic activation/responder lease. Ordinary left-clicks on actionable Accessibility controls use exact-window `AXPress` when available; canvas/viewport clicks and other pointer actions retain the recipient-local process event path, and one user action is never double-sent. Verify both foreground PID and target window presentation: Stage Manager can expand a window without changing foreground PID. Native captures may be explicitly marked, perspective-corrected low-resolution thumbnails. Never claim full-resolution capture from dimensions alone or treat successful posting as proof an app accepted input. Unsupported application behavior does not justify global input or activation fallbacks. See `docs/background-control.md`.
+Use standalone `list_windows`, `get_screenshot`, `virtual_pointer`, and `virtual_keyboard` for MCP GUI work; the aggregate `computer` MCP tool is removed. MCP still does not expose `agent_run`, `agent_status`, `read_file`, or `write_file`; the client orchestrates work using Bash/Python and the restored GUI tools. Prefer an app's normal/default profile or session: reuse an existing window when available, otherwise launch it with app_open, and create a new instance/profile only when the user explicitly asks. Native events use exact Cocoa window IDs and AX geometry. Native-app input uses the pre-removal process/window route without a responder lease; Chrome uses its registered managed DevTools target. Ordinary left-clicks on actionable Accessibility controls use exact-window `AXPress` when available; canvas/viewport clicks and other pointer actions retain the recipient-local process event path, and one user action is never double-sent. Verify both foreground PID and target window presentation: Stage Manager can expand a window without changing foreground PID. Native captures may be explicitly marked, perspective-corrected low-resolution thumbnails. Never claim full-resolution capture from dimensions alone or treat successful posting as proof an app accepted input. Unsupported application behavior does not justify global input or activation fallbacks. See `docs/background-control.md`.
 
 Image outputs carry byte-verified `width`, `height`, `format`, and `image_metadata`; screenshots also retain `screen_width` / `screen_height`. MCP image blocks expose `_meta["lessagent/image"]` and compatibility dimension aliases. Pass actual screenshot dimensions with pixel coordinates. A client-specific `fovea` or inspector field is not a standard MCP requirement and may still be omitted by its adapter. No fictitious crop is emitted.
 
 Direct screenshots now default to project `output/computer/`. Preserve internal agent iteration/continuity locations but copy important finished binaries, images, 3D files and other deliverables to project `output/`. Keep source code in its source directories and do not overwrite unrelated output. End each completed task with a factual summary of changes, artifact paths, tests/results and remaining limitations. Changing source does not deploy the running backend.
 
-Initialization, tool descriptions, and successful workspace open/list responses instruct clients to read workspace-root `Agents.md` first with `read_file`. Try `AGENTS.md` when the first spelling is absent; if neither exists, report that and proceed. Follow `has_more` / `next_offset` until guidance is fully read. This is client workflow guidance, not a server-side assertion that a client actually read or obeyed the file.
+Initialization, tool descriptions, and successful workspace open/list responses instruct clients to read workspace-root `Agents.md` first with Bash/Python. Try `AGENTS.md` when absent; if neither exists, report that and proceed. Read applicable nested guidance before subdirectory edits. This is workflow guidance, not a server-side assertion that a client obeyed it.
 
-Every MCP tool, including `workspace_open`, `workspace_list`, `list_resources`, and `read_resource`, requires a `summary` string: a concise, nonblank paragraph describing the specific call's intended action and purpose, at most 1000 Unicode characters. Do not claim an outcome before observing the result. For example:
-
-```json
-{"workspace":"WORKSPACE_ID","path":"Agents.md","summary":"Read the project guidance before inspecting code or running tests."}
-```
-
-The MCP adapter validates summaries before side effects and removes the metadata before dispatch. A valid summary is request-only metadata and is not echoed back in text or `structuredContent`. Actual execution data remains under `structuredContent.result`; elapsed call time is exposed as `structuredContent.time_cost_ms`. Successful calls use one terse status line such as `Result: ok · 12 ms`; errors include the error message. `isError` remains authoritative for tool errors. Invalid summaries produce a repairable tool error. Shell commands, Python code, and GUI input never execute summary text. This requirement is MCP-only: internal agent tools and direct CLI/HTTP tool APIs keep their existing contracts.
+Every MCP tool, including `workspace_open`, `workspace_list`, `list_resources`, and `read_resource`, requires eight request-only observability fields: `summary`, `agent`, `model`, `main_task`, `current_task`, `progress`, `quality`, and `current_timestamp`. `summary` is a 1–500 Unicode-character observability paragraph: state verified work completed so far, include any relevant mistake or correction if one occurred, then say what the current tool call will do and why. Never invent mistakes, claim unverified success, or repeat main task, current task, progress, or quality inside it. `main_task` is the overall task name, `current_task` is the current step, and `progress`/`quality` are integer 0–100 scores. `agent`, `model`, and `current_timestamp` retain their caller-identification/timestamp meanings. Example: `{"summary":"Verified the MCP schema and found the previous 49-character cap made summaries too terse. No execution error occurred; this call updates the schema/tests to allow 500 characters and preserve richer progress context.","agent":"ChatGPT","model":"GPT-5.6 Sol","main_task":"Improve MCP summaries","current_task":"Patch summary contract","progress":60,"quality":92,"current_timestamp":"2026-09-12T08:30:00-07:00"}`. Detailed metadata guidance lives in `instruction.md`, not repeated in every tool description. The adapter validates and strips these fields before execution, while Logs records them with sanitized arguments/output. This requirement is MCP-only; internal agent tools and direct CLI/HTTP tool APIs keep their existing contracts.
 
 ## Release build and production run (not development/test)
 

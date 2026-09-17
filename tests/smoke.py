@@ -321,6 +321,15 @@ with tempfile.TemporaryDirectory(prefix='lessagent-smoke-') as tmp:
         ui['terminal_heights']={tid:480}
         rpc={'jsonrpc':'2.0','id':1,'method':'tools/list'}
         assert len(request('/mcp',rpc)['result']['tools'])>=10
+        info_req=urllib.request.Request(base+'/mcp', headers={
+            'Origin':'https://service-check.example',
+            'Sec-Fetch-Site':'cross-site',
+        })
+        with urllib.request.urlopen(info_req, timeout=5) as info_response:
+            info_body=info_response.read().decode()
+            assert info_response.headers.get('Access-Control-Allow-Origin')=='*'
+        assert info_body.splitlines()[0]=='OK'
+        assert '<summary><code>shell</code></summary>' in info_body and 'main_task' in info_body and 'current_timestamp' in info_body and 'wait_n' in info_body
         request('/mcp',{'jsonrpc':'2.0','method':'notifications/initialized'},status=202)
         bridge=subprocess.run(args+['mcp'],input=json.dumps(rpc)+'\n',capture_output=True,text=True,timeout=10)
         assert bridge.returncode==0 and json.loads(bridge.stdout)['result']['tools']

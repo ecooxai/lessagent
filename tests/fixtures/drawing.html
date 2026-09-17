@@ -44,7 +44,7 @@ function record(e){
   const p={type:e.type,x:e.clientX,y:e.clientY,canvasX:e.clientX-r.x,canvasY:e.clientY-r.y,
     button:e.button,buttons:e.buttons,pointerId:e.pointerId,pointerType:e.pointerType,delta:e.deltaY,meta:e.metaKey,ctrl:e.ctrlKey,alt:e.altKey,shift:e.shiftKey,
     key:e.key,code:e.code,detail:e.detail,target:e.target.id,trusted:e.isTrusted,focused:document.hasFocus(),
-    value:e.target.value,planId:plan.id,expectedX:expected?.x,expectedY:expected?.y,errorCSSPixels:expected?.error};
+    value:e.target.value,selectionStart:e.target.selectionStart,selectionEnd:e.target.selectionEnd,planId:plan.id,expectedX:expected?.x,expectedY:expected?.y,errorCSSPixels:expected?.error};
   emit(p);
   if(Number.isFinite(e.clientX)){
     document.querySelector('#actual').textContent=e.clientX.toFixed(1)+' / '+e.clientY.toFixed(1);

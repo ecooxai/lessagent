@@ -2,7 +2,7 @@ use crate::{Result, err, state::App, tools::string};
 use axum::{
     Json, Router,
     extract::{ConnectInfo, DefaultBodyLimit, Path, Query, Request, State},
-    http::{StatusCode, header},
+    http::{Method, StatusCode, header},
     middleware::{self, Next},
     response::{IntoResponse, Response},
     routing::{get, post},
@@ -37,7 +37,7 @@ pub fn router(app: Arc<App>) -> Router {
         .route("/api/inventory/{workspace}", get(inventory))
         .route("/api/media/{workspace}", post(media))
         .route("/api/audio/{action}", post(audio))
-        .route("/mcp", post(mcp))
+        .route("/mcp", get(mcp_info).post(mcp))
         .layer(middleware::from_fn_with_state(app.clone(), auth));
     Router::new()
         .route(
@@ -64,7 +64,7 @@ pub fn router(app: Arc<App>) -> Router {
         )
         .route(
             "/health",
-            get(|| async { Json(json!({"service":"lessagent","ok":true,"management_api":1})) }),
+            get(|| async { Json(json!({"service":"lessagent","ok":true,"management_api":1,"build":crate::build_info(),"pid":std::process::id()})) }),
         )
         .merge(api)
         .layer(DefaultBodyLimit::max(40 * 1024 * 1024))
@@ -90,6 +90,11 @@ async fn headers(req: Request, next: Next) -> Response {
     r
 }
 async fn auth(State(app): State<Arc<App>>, req: Request, next: Next) -> Response {
+    // GET /mcp is a public, read-only health/introspection surface used by the
+    // standalone service checker, including through HTTPS tunnels.
+    if req.uri().path() == "/mcp" && req.method() == Method::GET {
+        return next.run(req).await;
+    }
     let h = req.headers();
     let host = h
         .get(header::HOST)
@@ -195,6 +200,7 @@ async fn state(
             serde_json::to_value(&*disk).unwrap()
         }
     };
+    v["debug_build"] = json!(cfg!(debug_assertions));
     v["terminals"] = json!(if query.get("summary").is_some_and(|v| v == "true") {
         app.terminals.summaries()
     } else {
@@ -251,6 +257,29 @@ async fn action(
     Json(a): Json<Value>,
 ) -> Api {
     let result = match action.as_str() {
+        "service_check_open" => {
+            let base_url = string(&a, "base_url")?;
+            let parsed = reqwest::Url::parse(base_url)?;
+            if !matches!(parsed.scheme(), "http" | "https") {
+                return Err(err("Service checker base URL must use HTTP or HTTPS").into());
+            }
+            let executable = std::env::current_exe()?;
+            let mut child = std::process::Command::new(executable)
+                .arg("service-check")
+                .arg("--data-dir")
+                .arg(&app.dir)
+                .arg("--base-url")
+                .arg(base_url)
+                .stdin(std::process::Stdio::null())
+                .stdout(std::process::Stdio::null())
+                .stderr(std::process::Stdio::null())
+                .spawn()?;
+            let pid = child.id();
+            std::thread::spawn(move || {
+                let _ = child.wait();
+            });
+            json!({"ok":true,"pid":pid})
+        }
         "event_read" => {
             let id = string(&a, "id")?;
             if id.is_empty() || !id.bytes().all(|c| c.is_ascii_alphanumeric() || c == b'-') {
@@ -542,7 +571,13 @@ async fn action(
     };
     if !matches!(
         action.as_str(),
-        "browse" | "git_status" | "git_file" | "git_branch" | "codex_usage" | "tool_definitions"
+        "browse"
+            | "git_status"
+            | "git_file"
+            | "git_branch"
+            | "codex_usage"
+            | "tool_definitions"
+            | "service_check_open"
     ) {
         app.save()?;
     }
@@ -585,6 +620,47 @@ async fn audio(
         .to_owned();
     Ok(([(header::CONTENT_TYPE, mime)], r.bytes().await?).into_response())
 }
+fn html_escape(value: &str) -> String {
+    value
+        .replace('&', "&amp;")
+        .replace('<', "&lt;")
+        .replace('>', "&gt;")
+        .replace('\"', "&quot;")
+        .replace('\'', "&#39;")
+}
+
+async fn mcp_info(State(app): State<Arc<App>>) -> Response {
+    let request = json!({"jsonrpc":"2.0","id":1,"method":"tools/list"});
+    let tools = crate::mcp::handle(app, request)
+        .await
+        .and_then(|value| value["result"]["tools"].as_array().cloned())
+        .unwrap_or_default();
+    let mut body = String::from("OK\n");
+    body.push_str("<meta charset=\"utf-8\"><meta name=\"viewport\" content=\"width=device-width,initial-scale=1\"><title>Lessagent MCP tools</title>");
+    body.push_str("<style>body{font:14px/1.5 -apple-system,BlinkMacSystemFont,sans-serif;max-width:980px;margin:24px auto;padding:0 18px;color:#26352f;background:#f8faf7}h1{font-size:22px}p{color:#68746c}details{background:white;border:1px solid #dde4dc;border-radius:8px;margin:9px 0;padding:9px 12px}summary{cursor:pointer;font-weight:650}pre{white-space:pre-wrap;overflow-wrap:anywhere;background:#f3f6f2;padding:10px;border-radius:6px}code{font-family:ui-monospace,SFMono-Regular,Menlo,monospace}</style>");
+    body.push_str("<main><h1>Lessagent MCP tools</h1><p>Click a tool name to show its description, input schema, and annotations.</p>");
+    for tool in tools {
+        let name = html_escape(tool["name"].as_str().unwrap_or("tool"));
+        let description = html_escape(tool["description"].as_str().unwrap_or(""));
+        let schema = html_escape(
+            &serde_json::to_string_pretty(&tool["inputSchema"]).unwrap_or_else(|_| "{}".into()),
+        );
+        let annotations = html_escape(
+            &serde_json::to_string_pretty(&tool["annotations"]).unwrap_or_else(|_| "{}".into()),
+        );
+        body.push_str(&format!("<details><summary><code>{name}</code></summary><p>{description}</p><strong>Input schema</strong><pre>{schema}</pre><strong>Annotations</strong><pre>{annotations}</pre></details>\n"));
+    }
+    body.push_str("</main>");
+    (
+        [
+            (header::CONTENT_TYPE, "text/html; charset=utf-8"),
+            (header::ACCESS_CONTROL_ALLOW_ORIGIN, "*"),
+        ],
+        body,
+    )
+        .into_response()
+}
+
 async fn mcp(State(app): State<Arc<App>>, Json(v): Json<Value>) -> Response {
     match crate::mcp::handle(app, v).await {
         Some(v) => Json(v).into_response(),
@@ -594,6 +670,8 @@ async fn mcp(State(app): State<Arc<App>>, Json(v): Json<Value>) -> Response {
 pub async fn serve(app: Arc<App>, port: u16) -> Result<()> {
     let listener = tokio::net::TcpListener::bind((std::net::Ipv4Addr::UNSPECIFIED, port)).await?;
     let port = listener.local_addr()?.port();
+    app.terminals
+        .set_connection(port, app.dir.clone(), std::env::current_exe()?);
     println!(
         "Listening on all IPv4 interfaces (0.0.0.0:{port}); remote browser: http://<server-address>:{port}/\nApp HTTP port: {port}\nMCP HTTP port: {port} — http://127.0.0.1:{port}/mcp"
     );

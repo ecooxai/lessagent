@@ -14,7 +14,7 @@ cargo build --release --locked
 ./target/release/lessagent
 ```
 
-Running `lessagent` starts a persistent backend on default port **3210**, then prompts you to open the interactive terminal interface, open the browser UI, or leave the backend running without opening either. If the backend is already running, it connects to it. `lessagent start` starts the backend without a menu; `lessagent tui` opens the terminal interface directly. App HTTP and MCP HTTP endpoints are printed at startup; both share port 3210, with MCP at `/mcp`. Backend logs are appended to `server.log` in the data directory. Noninteractive launches start the backend and print connection details without entering the TUI. Use `lessagent serve` to run the backend in the foreground.
+Running `lessagent` starts (or connects to) the persistent backend on default port **3210** and opens the native Lessagent service-monitor window as the main app window. `cargo run` uses this same default launch mode in development. The native window shows the browser UI URL at the top and provides an **Open in browser** button. Custom URLs added in the native monitor are persisted in `service-check.json` under the active data directory and loaded again whenever the window is reopened. `lessagent start` starts the backend without opening the native window; `lessagent tui` opens the terminal interface directly; `lessagent service-check --base-url URL` opens only the standalone native monitor. App HTTP and MCP HTTP endpoints are printed at startup; both share port 3210, with MCP at `/mcp`. Backend logs are appended to `server.log` in the data directory. Use `lessagent serve` to run the backend in the foreground.
 
 Manage the backend and configure an optional browser password:
 
@@ -104,14 +104,13 @@ Tool-only clients can use the read-only `list_resources` and `read_resource` too
 
 Use project-root `output/` for important finished work: verified binaries, images, 3D files, renders, and other deliverables. Direct computer captures default to `output/computer/`; internal agent iteration artifacts keep their existing locations. Finish each task with a factual summary of changes, output paths, actual test results, and limitations.
 
-`browser_open` opens a new window in the existing persistent Lessagent-managed Chrome profile by default (creating that managed profile only when none exists). Its `url` should include a model-authored purpose query such as `?purpose=texttodescribepurposeofthiswindow_by_modelname`; append `&purpose=...` when a query string already exists and URL-encode the value. It defaults to **1000 × 600 logical points**, advertises maxima based on the current primary display's logical resolution, and revalidates before launching Chrome. Windows are fitted and centered within its visible work area (excluding menu bar/Dock); `browser_size` reports requested/actual/maximum sizes. These are window dimensions, not Retina screenshot pixels. Refresh `tools/list` after changing resolution.
+Use the public `browser_open` tool for controlled Chrome and `app_open` for native applications. The restored managed-browser path reuses Lessagent-managed profile storage and never copies or modifies personal Chrome data. Reuse the returned exact `window_id` / `pid` with `virtual_pointer` and `virtual_keyboard`. See `docs/instruction.md`.
 
 Image responses provide actual encoded `width`, `height`, `format`, and `image_metadata`, plus `screen_width`/`screen_height` for screenshots. The MCP image block carries `_meta["lessagent/image"]` and compatibility aliases for clients that forward those fields. Use those verified pixel dimensions for coordinates, not requested window sizes. Client-private inspector fields such as `fovea` are not fabricated; an adapter may still ignore extension metadata.
 
 The focused macOS regression test verifies resource access, default and maximum-size windows, oversized-request rejection before launch, output paths, and image metadata through MCP and the browser API:
 
 ```sh
-uv run --with 'mcp>=1.20,<2' tests/browser_geometry.py target/debug/lessagent
 ```
 
 
@@ -128,49 +127,42 @@ For a local MCP client that supports stdio, configure the absolute binary path:
 }
 ```
 
-The stdio process bridges to the running backend. Add matching `--port` and `--data-dir` arguments when using custom settings. Tools include workspace open/list, resource bridges, file operations, PTYs, and computer control. MCP intentionally does not expose `agent_run` or `agent_status`; the connected MCP client is expected to orchestrate those primitives directly.
+The stdio process bridges to the running backend. Add matching `--port` and `--data-dir` arguments when using custom settings. Tools include workspace open/list, resource bridges, Bash/Python/PTYs, multi-file `get_files`/`send_files` transfer, image writing, and standalone GUI control. MCP intentionally does not expose `agent_run`, `agent_status`, `read_file`, `write_file`, the aggregate `computer` tool; the connected client orchestrates those operations with Bash/Python and the standalone primitives.
 
 Clients supporting stateless MCP HTTP POST can use `http://127.0.0.1:3210/mcp` without authentication headers. MCP remains public even when a browser password is set. JSON-RPC notifications return HTTP 202. The implementation supports initialization, ping, tool discovery, and calls; it does not provide an SSE event stream. A cloud-hosted chat such as ChatGPT cannot reach your loopback address directly; connecting it requires a compatible trusted bridge outside this project's local server.
 
 ### Read-first guidance and per-call summaries
 
-MCP initialization and every tool description tell clients to read the workspace-root `Agents.md` with `read_file` before project inspection, commands, edits, or delegation. Try `AGENTS.md` when the first spelling is absent, and report when neither file exists. Read the whole file using `has_more` / `next_offset` and check applicable nested guidance before working in a subdirectory. Workspace open/list results repeat this guidance. This is a client instruction, not a server-enforced acknowledgement gate.
+MCP initialization and tool descriptions tell clients to read the workspace-root `Agents.md` with `bash` or `python` before project work; try `AGENTS.md` if absent and read applicable nested guidance. `read_file` and `write_file` are not exposed over MCP.
 
-**Every MCP tool requires `summary`**, including workspace open/list and the resource bridge tools. Supply a concise, nonblank paragraph of at most 1000 Unicode characters explaining what this particular call will do and why, then include current task progress in the same paragraph: a score such as `Progress 60/100`, what has already been completed, and what this call advances next. Include only verified prior work in the completed portion; do not claim the current call succeeded before its result, and do not include secrets. For example, after opening a workspace:
+Every MCP tool requires eight request-only observability fields: `summary`, `agent`, `model`, `main_task`, `current_task`, `progress`, `quality`, and `current_timestamp`. `summary` allows 1–500 Unicode characters so it can capture verified work completed so far, relevant mistakes/corrections when they occurred, and what the current tool call will do and why. Do not invent mistakes, claim unverified success, or repeat main task, current task, progress, or quality inside it. `progress` and `quality` are integer 0–100 values. Detailed guidance lives in `lessagent://server/instruction.md` instead of being repeated in every tool description. For example:
 
 ```json
-{"workspace":"WORKSPACE_ID","path":"Agents.md","summary":"Progress 5/100 — done: workspace opened. Next: read the project instructions before inspecting code or running tests."}
+{"workspace":"WORKSPACE_ID","summary":"Verified the target window and screenshot dimensions. Earlier I used stale coordinates, so I corrected them from the latest screenshot. This call scrolls the exact selected window to reveal the next section.","agent":"ChatGPT","model":"GPT-5.6 Sol","main_task":"Inspect background window","current_task":"Scroll to next section","progress":65,"quality":92,"current_timestamp":"2026-09-12T08:00:00-07:00","action":"scroll","window_id":123,"pid":456,"x":800,"y":500,"distance":10,"screen_width":1000,"screen_height":600}
 ```
 
-Missing, non-string, whitespace-only, and overlong summaries are rejected before execution with `isError: true`. A valid summary is request-only metadata: the adapter removes it before dispatch and does not echo it in the response. Execution results stay under `structuredContent.result`, elapsed execution time is exposed as `structuredContent.time_cost_ms`, and image content blocks remain separate. Successful calls emit one terse text status such as `Result: ok · 12 ms`; errors emit `Result: error · 3 ms` plus the error message. Direct CLI/HTTP and internal agent tool contracts are unchanged. Reconnect clients or refresh `tools/list` after deploying the updated server so cached schemas include this required field.
+Missing, malformed, whitespace-only, or over-500-character summaries are rejected before execution. Metadata is stripped before dispatch and recorded with sanitized arguments/output in Logs. Execution results remain under `structuredContent.result`, and `structuredContent.time_cost_ms` reports elapsed time.
 
 MCP execution tools are `bash` (`command`) and `python` (`code`, Python 3), with `shell` retained as a Bash alias. Both start workspace PTYs and return `terminal_id`, `output`, `exited`, and `exit_code`. `wait_ms` waits up to 10 seconds; use `terminal_read`, `terminal_write`, and `terminal_stop` for ongoing commands. Each Python call starts a fresh interpreter; stdin stays available through `terminal_write`.
 
-Scroll at a screenshot position with `virtual_pointer` (replace the workspace and target IDs):
-
-```json
-{"workspace":"WORKSPACE_ID","summary":"Progress 65/100 — done: selected and observed the target window. Next: scroll it upward to inspect more content.","action":"scroll","window_id":123,"pid":456,"x":800,"y":500,"distance":10,"screen_width":1000,"screen_height":600}
-```
-
-`distance: 10` scrolls **up 10 lines**; `distance: -10` scrolls down. Accepted distance is -100 through 100. Legacy `delta` keeps its existing opposite sign (positive down); passing both is an error. Background mode requires `x,y`; desktop mode accepts `x,y` or uses the current pointer if both are omitted. Input actions return an automatic screenshot after the existing two-second settling delay.
+`virtual_pointer.distance` uses positive values for up and negative for down; legacy `delta` has the opposite sign. Input actions return a fresh automatic screenshot after the settling delay.
 
 To send an image to the MCP server, call `write_image` with a standard image block nested in its JSON arguments:
 
 ```json
-{"workspace":"WORKSPACE_ID","summary":"Save the supplied image in the workspace and verify its metadata.","path":"images/input.png","image":{"type":"image","mimeType":"image/png","data":"BASE64_ENCODED_IMAGE"}}
+{"workspace":"WORKSPACE_ID","summary":"Image ready; save it","agent":"ChatGPT","model":"GPT-5.6 Sol","main_task":"Save supplied image","current_task":"Write PNG","progress":80,"quality":95,"current_timestamp":"2026-09-12T08:00:00-07:00","path":"images/input.png","image":{"type":"image","mimeType":"image/png","data":"BASE64_ENCODED_IMAGE"}}
 ```
 
-The tool validates base64, image headers/dimensions, MIME type, extension, size (20 MiB maximum), and workspace path boundaries before writing. Supported formats are PNG, JPEG, GIF, and WebP. The structured result contains the image metadata, the text response stays terse, and a native MCP `image` content block contains the received image. `read_file` also returns image blocks for these formats. `get_screenshot`, `app_open`, `browser_open`, `virtual_pointer`, and `virtual_keyboard` return PNG screenshot image blocks when they observe a GUI target; every successful virtual input includes a fresh automatic observation. Input images are file uploads; no model vision request is made by `write_image`.
+The tool validates base64, image headers/dimensions, MIME type, extension, size (20 MiB maximum), and workspace path boundaries before writing. Supported formats are PNG, JPEG, GIF, and WebP. The structured result contains image metadata and a native MCP image block. Use Bash/Python for subsequent file reads. `get_screenshot`, `virtual_pointer`, and `virtual_keyboard` return PNG screenshot image blocks when they observe a GUI target; every successful virtual input includes a fresh automatic observation. Input images are file uploads; no model vision request is made by `write_image`.
 
 The server negotiates MCP versions 2025-03-26, 2025-06-18, and 2025-11-25. The official Python SDK integration test covers HTTP and stdio:
 
 ```sh
 uv run --with 'mcp>=1.20,<2' tests/mcp_client.py target/debug/lessagent
-uv run --with 'mcp>=1.20,<2' --with pillow tests/computer_background.py target/debug/lessagent
 uv run --with 'mcp>=1.20,<2' --with pillow tests/native_app_virtual_tools.py target/debug/lessagent
 ```
 
-The computer-control integration tests require macOS Accessibility and Screen Recording access. `computer_background.py` uses installed Chrome for its isolated background fixture; `native_app_virtual_tools.py` launches fresh Blender and Auri instances and verifies recipient-side state changes instead of treating event posting as acceptance. It checks typing, modifier keys, dragging, scroll direction/position, and screenshot images through the MCP SDK; it saves evidence under `output/background-control/`. The test fails if its background Chrome becomes the operating-system foreground app, including after the screenshot delay. Recipient-local document focus is recorded separately, because it is not OS foreground activation. There is no flag to waive a background failure.
+The computer-control integration tests require macOS Accessibility and Screen Recording access. `browser_profile_virtual_tools.py` opens disposable managed Chrome profiles with browser_open and verifies reuse, persistence, and real virtual input. The local macOS `cargo test --locked` suite also runs `chrome_background_pointer_regression`, which Bash-launches a disposable Chrome profile and repeats the same trusted pointer sequence automatically. `native_app_virtual_tools.py` launches fresh Blender and Auri instances and verifies recipient-side state changes instead of treating event posting as acceptance. Neither test permits a global-input fallback.
 
 ## Development and validation
 
@@ -223,7 +215,9 @@ Large job events (over 16 KiB) are archived under `events/` in the data director
 
 ### Standalone GUI tools
 
-`get_screenshot` captures a read-only target image and metadata without an action argument. `virtual_pointer` handles move/click/drag/scroll; `virtual_keyboard` handles `type`+`text` or `key`+`key`. Every successful virtual input returns a fresh automatic screenshot image. `list_windows` lists existing exact targets. `app_open` opens a native app without requesting focus (Blender uses `--no-window-focus`), or reuses one unambiguous window with `new_instance:false`. Each tool retains normal workspace/summary and permission requirements. The aggregate `computer` MCP tool has been removed; internal Light-mode compatibility still uses a private aggregate executor and is not part of MCP discovery.
+`get_screenshot` captures a read-only target image and metadata without an action argument. `virtual_pointer` handles move/click/drag/scroll; `virtual_keyboard` handles `type`+`text` or `key`+`key`. Every successful virtual input returns a fresh automatic screenshot image. `list_windows` lists existing exact targets. Use `app_open` for native apps and `browser_open` for Chrome, then reuse the returned exact target IDs. Create a fresh profile or additional instance only when explicitly requested. Each tool retains normal workspace/summary and permission requirements. The aggregate `computer` MCP tool has been removed; internal Light-mode compatibility still uses a private aggregate executor and is not part of MCP discovery.
+
+For ordinary native-app work, use `app_open` with `app` (installed name, bundle ID or absolute `.app` path) and `new_instance:false`. This reuses one unambiguous window or launches normally if the app is not running; ambiguity returns an error directing the client to `list_windows`. The restored launcher's `new_instance:true` default requests another instance, not a fresh profile. The normal app profile/session is preserved, and the tool returns exact IDs and an automatic screenshot. The same required metadata, including a 1–500-character `summary`, applies.
 
 Native window coordinates come from exact-ID Accessibility geometry, not Stage Manager's distorted thumbnail bounds. Ordinary window capture uses ScreenCaptureKit; shelved windows can use a perspective-corrected **low-resolution thumbnail**, explicitly marked by `capture_quality`, `perspective_corrected` and `capture_backend` in both result and MCP image metadata. No activation or global input fallback is used to improve capture quality. See [background-control.md](docs/background-control.md) for scope, examples, and limitations.
 
@@ -231,30 +225,15 @@ Native window coordinates come from exact-ID Accessibility geometry, not Stage M
 
 The standalone MCP GUI tools share one native control backend with the CLI and agent runtimes; Light mode keeps a private aggregate executor for its internal `<computer>` protocol. Enable computer control in Settings and grant macOS Accessibility and Screen Recording permissions to the process running Lessagent.
 
-For **Chrome**, call the standalone `browser_open` tool with an HTTP(S) `url`; include `?purpose=texttodescribepurposeofthiswindow_by_modelname` (or `&purpose=...` if needed) so the model records why it opened that window. This creates a separate background Chrome window in the existing persistent Lessagent-managed profile by default, using a loopback-only control endpoint. If that managed Chrome process is already alive, `browser_open` reuses it and creates another controlled window; cookies/storage persist across calls.
-Use the returned `window_id`, `pid`, and actual screenshot dimensions with `virtual_pointer` and `virtual_keyboard` thereafter:
+Use the public `browser_open` tool for controlled Chrome and `app_open` for native applications. The restored managed-browser path reuses Lessagent-managed profile storage and never copies or modifies personal Chrome data. Reuse the returned exact `window_id` / `pid` with `virtual_pointer` and `virtual_keyboard`. See `docs/instruction.md`.
 
-```json
-{"url":"http://127.0.0.1:4173/","width":1000,"height":600}
-```
+Chrome page input uses the registered managed DevTools channel created by `browser_open`. Unmanaged Chrome is screenshot-only; no experimental native Chrome or shared/global pointer fallback is used. Other applications retain the exact-process/window native input path.
 
-Managed Chrome uses browser-local `Input` commands with explicit button state
-and a separate virtual pen pointer ID (rather than capturing the human mouse),
-not global mouse events or JavaScript-dispatched DOM events. This matters because
-Chromium's native macOS event builder samples the physical mouse's button state;
-PID-posted native drags can therefore lose the held button during movement.
-The user's ordinary browser/profile is never debug-enabled or restarted; only Lessagent's managed profile is reused.
-Unmanaged Google Chrome input is rejected with an instruction to use
-`browser_open`, rather than falsely claiming reliable isolated input. Window
-screenshots and the independent virtual pointer remain native macOS features.
-Session records persist in the backend data directory, so managed windows can
-be reused after a helper or backend restart. The persistent managed browser profile is separate
-from the user's normal cookies, login sessions, and extensions.
+Adoption records live in the backend data directory and can be reused while the exact browser target remains valid. They refer to the profile Chrome was actually launched with; Lessagent does not create a second persistent copy of the user's original profile.
 
 Only page content is controlled through this channel. Browser title bars,
 toolbar menus, docked developer tools/side panels, and multiple tabs in the same
-managed window are rejected rather than risking the wrong target. Open another
-controlled window to navigate independently. Other native applications continue
+managed window are rejected rather than risking the wrong target. Use browser_open for another controlled window to navigate independently. Other native applications continue
 to use process-directed input and require application-specific verification.
 
 For an existing native application, call `list_windows` first, select a window, and send both its `window_id` and `pid` on every targeted `get_screenshot`, `virtual_pointer`, and `virtual_keyboard` call. Input without a target
@@ -321,6 +300,10 @@ builds. One serialized helper owns the nonactivating virtual pointer across acti
 Its two one-shot idle timers do not poll focus. It exits when the backend closes
 the pipe; a helper failure never replays an action or uses a global input API.
 
+macOS app launches default to background through `open -g`; Blender additionally uses `--no-window-focus`. Preserve the user's existing Chrome profile and follow `docs/instruction.md` for the exact new-window launch recipe. `mode:"background"` names the isolated transport and can also control an already-foreground target.
+
+Native Chrome clicks/keys use recipient-local focus notifications without restoring global focus. Native Chrome drag is rejected before input because shared pressed-button state cannot be changed safely by this transport; an already-approved DevTools target supports complete independent gestures. `list_windows` reports these action capabilities. Native supplementary Unicode and background Command shortcuts also require approved DevTools; unsupported requests fail before input rather than silently dropping text or commands. Successful posting is not proof of application acceptance; the MCP matrix in `tests/macos_app_input.py` checks actual browser events and Blender scene state.
+
 **macOS is background-only.** All mouse, keyboard, drag, and scroll actions
 require `window_id` and `pid`; even an explicit `mode:"desktop"` is rejected.
 The macOS global-input implementation has been removed, not merely bypassed.
@@ -331,7 +314,6 @@ Run the background-control regression with the official MCP SDK:
 
 ```sh
 cargo build --locked
-uv run --with 'mcp>=1.20,<2' --with pillow tests/computer_background.py target/debug/lessagent
 ```
 
 The test starts disposable Chrome and Lessagent instances. It exercises real
@@ -379,10 +361,7 @@ channel can address its window on another Space when native capture remains
 available. Native PID input still requires an onscreen target. No channel falls
 back to global input.
 
-Unmanaged Google Chrome windows are read-only through the standalone GUI surface. Input is
-rejected with a `browser_open` instruction. Controlled Chrome uses its managed
-virtual pointer; it never falls back to native input. Native non-Chrome apps
-retain process-targeted background input.
+Chrome page input uses the registered managed DevTools channel created by `browser_open`. Unmanaged Chrome is screenshot-only; no experimental native Chrome or shared/global pointer fallback is used. Other applications retain the exact-process/window native input path.
 
 Controlled Chrome observations capture the actual page surface, not macOS's
 Stage Manager/Mission Control thumbnail. The image preserves window-relative

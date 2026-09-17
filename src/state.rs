@@ -255,7 +255,12 @@ impl App {
         self.log_with_details(kind, message, None);
     }
     pub fn log_with_details(&self, kind: &str, message: &str, details: Option<Value>) {
-        let mut entry = json!({"at":crate::now(),"kind":kind,"message":crate::clip(message,4000)});
+        self.log_with_details_id(kind, message, details);
+    }
+    pub fn log_with_details_id(&self, kind: &str, message: &str, details: Option<Value>) -> String {
+        let id = crate::id();
+        let mut entry =
+            json!({"id":id,"at":crate::now(),"kind":kind,"message":crate::clip(message,4000)});
         if let Some(details) = details {
             entry["details"] = details;
         }
@@ -263,6 +268,24 @@ impl App {
         disk.logs.push(entry);
         if disk.logs.len() > 500 {
             disk.logs.remove(0);
+        }
+        id
+    }
+    pub fn update_log_details(&self, id: &str, patch: Value) {
+        let mut disk = self.disk.lock().unwrap();
+        let Some(entry) = disk.logs.iter_mut().find(|entry| entry["id"] == id) else {
+            return;
+        };
+        if !entry["details"].is_object() {
+            entry["details"] = json!({});
+        }
+        let Some(target) = entry["details"].as_object_mut() else {
+            return;
+        };
+        if let Some(patch) = patch.as_object() {
+            for (key, value) in patch {
+                target.insert(key.clone(), value.clone());
+            }
         }
     }
     pub fn event(&self, job: &str, mut event: Value) {

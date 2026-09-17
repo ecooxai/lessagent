@@ -1,5 +1,5 @@
 #!/usr/bin/env python3
-"""Verify detached startup, MCP readiness, and interactive TUI reconnection."""
+"""Verify detached backend startup, MCP readiness, and TUI reconnection."""
 import fcntl
 import struct
 import sys
@@ -24,7 +24,7 @@ with tempfile.TemporaryDirectory() as directory:
         sock.bind(('127.0.0.1', 0))
         port = sock.getsockname()[1]
     args = [str(binary), '--data-dir', directory, '--port', str(port)]
-    result = subprocess.run(args, capture_output=True, text=True, timeout=15)
+    result = subprocess.run(args + ['start'], capture_output=True, text=True, timeout=15)
     assert result.returncode == 0, result.stderr
     pid = int(re.search(r'Backend PID: (\d+)', result.stdout)[1])
     try:
@@ -38,7 +38,7 @@ with tempfile.TemporaryDirectory() as directory:
             return json.load(urllib.request.urlopen(req, timeout=5))
         assert urllib.request.urlopen(f'http://127.0.0.1:{port}/api/state', timeout=5).status == 200
         assert 'result' in request('/mcp', {'jsonrpc':'2.0', 'id':1, 'method':'tools/list'})
-        second = subprocess.run(args, capture_output=True, text=True, timeout=10)
+        second = subprocess.run(args + ['start'], capture_output=True, text=True, timeout=10)
         assert second.returncode == 0 and 'Connecting to running' in second.stdout
         assert 'Backend PID:' not in second.stdout
         master, slave = pty.openpty()
@@ -72,19 +72,7 @@ with tempfile.TemporaryDirectory() as directory:
                 ui.kill()
                 ui.wait()
             os.close(master)
-        # A plain interactive launch offers a choice instead of entering the TUI.
-        master, slave = pty.openpty()
-        fcntl.ioctl(slave, termios.TIOCSWINSZ, struct.pack('HHHH', 30, 120, 0, 0))
-        ui = subprocess.Popen(args, stdin=slave, stdout=slave, stderr=slave)
-        os.close(slave)
-        output = b''
-        try:
-            until(b'Open [c] CLI, [b] browser UI, or [n] neither?')
-            os.write(master, b'n\n')
-            assert ui.wait(timeout=5) == 0
-        finally:
-            if ui.poll() is None: ui.kill(); ui.wait()
-            os.close(master)
+        # Plain `lessagent` now owns the native main-window event loop; headless tests use explicit `start`.
         def cli(*command):
             r = subprocess.run(args + list(command), capture_output=True, text=True, timeout=20)
             assert r.returncode == 0, (command, r.stdout, r.stderr)
@@ -133,7 +121,7 @@ with tempfile.TemporaryDirectory() as directory:
         assert public('/api/login', {'password':'new password'})['token'] == token
         assert 'stopped' in cli('stop')
         pid = None
-        print('PASS: startup/menu/TUI, local token-free access, password login/persistence/change, public MCP access, stop/restart')
+        print('PASS: startup/TUI, local token-free access, password login/persistence/change, public MCP access, stop/restart')
     finally:
         if pid is not None:
             os.kill(pid, signal.SIGINT)

@@ -127,6 +127,7 @@ def exercise():
                     dict(
                         workspace=workspace,
                         summary=f'Focused managed Chrome test for {name}.',
+                        agent='gui-rollback-regression', model='test-client', main_task='Verify restored browser profile reuse', current_task=f'Exercise {name}', progress=70, quality=90, current_timestamp=time.strftime('%Y-%m-%dT%H:%M:%S%z'),
                         **args,
                     ),
                 )

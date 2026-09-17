@@ -31,6 +31,7 @@ let state = null,
   logResumeTimer;
 let startupAgentOpened = false,
   lastLogMarker = null,
+  logManualPaused = false,
   logPauseUntil = 0;
 function uiActive() { return !document.hidden && document.hasFocus(); }
 function surfaceActive(host) { return uiActive() && host.isConnected && !host.closest("[hidden]"); }
@@ -270,6 +271,8 @@ function render() {
   if (!state || !uiActive()) return;
   const w = workspace();
   document.body.dataset.mode = w?.mode || "normal";
+  const devBadge = $("#dev-badge");
+  if (devBadge) devBadge.hidden = !state.debug_build;
   $("#workspace-title").textContent = w?.path || "Open a folder";
   $("#workspace-title").title = w?.path || "";
   renderAgentStatus();
@@ -1077,7 +1080,12 @@ function renderSettings() {
   $("#view").append(root);
 }
 const LOG_PREVIEW_LIMIT = 500;
+const LOG_PAGE_SIZE = 20;
+const LOG_TASK_GAP_MS = 10 * 60 * 1000;
+const LOG_INTERACTION_PAUSE_MS = 2000;
 const expandedLogs = new Set();
+let logPage = 0,
+  logTaskFilter = null;
 function logMarker(log) {
   return log ? JSON.stringify([log.at, log.kind, log.message]) : "";
 }
@@ -1149,28 +1157,106 @@ function logToolPreview(log) {
   return parts.join(" · ");
 }
 function logEntryKey(log) {
-  return `${log.at}|${log.kind}|${log.message}`;
+  return log.id || `${log.at}|${log.kind}|${log.message}`;
 }
-function renderLogEntry(log) {
+function buildLogTaskSessions(entries) {
+  const sessions = [];
+  const lastByName = new Map();
+  const meta = new Map();
+  for (const log of entries) {
+    const name = log.details?.main_task;
+    if (!name) continue;
+    const at = Number(log.at) || 0;
+    let session = lastByName.get(name);
+    if (!session || at < session.lastAt || at - session.lastAt > LOG_TASK_GAP_MS) {
+      session = {id:`${name}\u241f${at}`, name, startAt:at, lastAt:at, items:[]};
+      sessions.push(session);
+      lastByName.set(name, session);
+    }
+    session.lastAt = Math.max(session.lastAt, at);
+    session.items.push(log);
+  }
+  for (const session of sessions) {
+    const count = session.items.length;
+    session.items.forEach((log, index) => meta.set(logEntryKey(log), {
+      sessionId:session.id,
+      startAt:session.startAt,
+      lastAt:session.lastAt,
+      duration:Math.max(0, session.lastAt - session.startAt),
+      callIndex:index + 1,
+      callCount:count,
+    }));
+  }
+  return {sessions, meta};
+}
+function formatLogDuration(ms) {
+  const seconds = Math.max(0, Math.round(ms / 1000));
+  if (seconds < 60) return `${seconds}s`;
+  const minutes = Math.floor(seconds / 60), rest = seconds % 60;
+  if (minutes < 60) return `${minutes}m ${rest}s`;
+  const hours = Math.floor(minutes / 60), minuteRest = minutes % 60;
+  return `${hours}h ${minuteRest}m`;
+}
+function logCallContext(log) {
   const detail = log.details;
+  if (!detail) return "";
+  const caller = [detail.agent, detail.model].filter(Boolean).join(" · ");
+  return caller;
+}
+function logMetadataLine(log, taskMeta) {
+  const detail = log.details || {};
+  const progress = Number.isInteger(detail.progress) ? `${detail.progress}/100` : "—";
+  const quality = Number.isInteger(detail.quality) ? `${detail.quality}/100` : "—";
+  const meta = el("div", "log-meta-line");
+  meta.title = "Tool / progress / score / time / main task / current task";
+  const toolRow = el("div", "log-tool-row");
+  toolRow.append(el("span", "log-tool-name", detail.tool || log.kind || "tool"));
+  const topRight = [];
+  if (taskMeta) topRight.push(`Task ${formatLogDuration(taskMeta.duration)} · Call ${taskMeta.callIndex}/${taskMeta.callCount}`);
+  if (detail.model) topRight.push(detail.model);
+  topRight.push(new Date(log.at).toLocaleString());
+  if (topRight.length) toolRow.append(el("span", "log-tool-meta", topRight.join(" · ")));
+  meta.append(
+    toolRow,
+    el("div", "log-progress-time", `Progress ${progress} · Score ${quality}`),
+    el("div", "log-main-task", `Main task: ${detail.main_task || "—"}`),
+    el("div", "log-current-task", `Current task: ${detail.current_task || "—"}`),
+  );
+  return meta;
+}
+function renderLogEntry(log, taskMeta) {
+  const detail = log.details;
+  const metaLine = logMetadataLine(log, taskMeta);
   const head = el("span", "log-head");
   head.append(
-    el("time", "log-time", new Date(log.at).toLocaleTimeString()),
     el("span", "log-kind", log.kind),
     el("span", "log-message", log.message),
   );
   if (!detail) {
     const row = el("div", "log-entry log-entry-static");
-    row.append(head);
+    row.append(metaLine, head);
     return row;
   }
   const key = logEntryKey(log);
   const row = el("details", "log-entry");
   const summary = el("summary", "log-summary");
-  summary.append(head);
+  summary.append(metaLine);
+  if (detail.summary) summary.append(el("span", "log-call-summary", detail.summary));
+  const context = logCallContext(log);
+  if (context) summary.append(el("span", "log-context", context));
   const preview = logToolPreview(log);
   if (preview) summary.append(el("code", "log-preview", preview));
-  row.append(summary, el("pre", "log-full", JSON.stringify(detail, null, 2)));
+  const callDetail = {...detail};
+  delete callDetail.output;
+  const expanded = el("div", "log-expanded");
+  expanded.append(el("pre", "log-full log-call-detail", JSON.stringify(callDetail, null, 2)));
+  if (detail.output !== undefined) {
+    expanded.append(
+      el("div", "log-output-label", "Output"),
+      el("pre", "log-full log-output", typeof detail.output === "string" ? detail.output : JSON.stringify(detail.output, null, 2)),
+    );
+  }
+  row.append(summary, expanded);
   row.open = expandedLogs.has(key);
   row.addEventListener("toggle", () => {
     if (row.open) expandedLogs.add(key);
@@ -1178,41 +1264,168 @@ function renderLogEntry(log) {
   });
   return row;
 }
-function renderLogs(force = false) {
-  const v = $("#view");
-  let logs = v.querySelector(".logs");
-  if (logs && !force && Date.now() < logPauseUntil) return;
-  if (!logs) {
-    v.replaceChildren(toolbar("Backend logs", button("Refresh", async () => {
-      logPauseUntil = 0;
-      await poll();
-      renderLogs(true);
-    })));
-    logs = el("div", "logs");
-    v.append(logs);
-  }
-  const entries = state.logs || [];
-  const latest = entries.at(-1);
-  const stamp = JSON.stringify([entries.length, latest?.at, latest?.kind, latest?.message, latest?.details]);
-  if (!force && logs.dataset.stamp === stamp) return;
-  const oldHeight = v.scrollHeight, oldTop = v.scrollTop;
-  logs.replaceChildren(...(entries.length
-    ? entries.slice().reverse().map(renderLogEntry)
-    : [el("p", "muted", "No backend events yet.")]));
-  logs.dataset.stamp = stamp;
-  if (oldTop > 0 && v.scrollHeight > oldHeight)
-    v.scrollTop = oldTop + (v.scrollHeight - oldHeight);
+function logUpdatesPaused() {
+  return logManualPaused || Date.now() < logPauseUntil;
 }
-function pauseLogUpdates() {
+function syncLogPauseButton() {
+  const pause = $("#view .log-pause");
+  if (!pause) return;
+  const paused = logUpdatesPaused();
+  pause.textContent = paused ? "Resume" : "Pause";
+  pause.setAttribute("aria-pressed", String(paused));
+}
+function resumeLogUpdates() {
+  const wasPaused = logUpdatesPaused();
+  logManualPaused = false;
+  logPauseUntil = 0;
+  clearTimeout(logResumeTimer);
+  logResumeTimer = undefined;
+  syncLogPauseButton();
+  if (!wasPaused) return;
+  const current = ui().tabs.find(tab => tab.id === ui().active);
+  if (current?.kind === "logs") renderLogs(true);
+}
+function pauseLogUpdates(kind = "interaction") {
   const active = ui().tabs.find(tab => tab.id === ui().active);
   if (active?.kind !== "logs") return;
-  logPauseUntil = Date.now() + 2000;
   clearTimeout(logResumeTimer);
-  logResumeTimer = setTimeout(() => {
+  logResumeTimer = undefined;
+  if (kind === "manual") {
+    logManualPaused = true;
     logPauseUntil = 0;
-    const current = ui().tabs.find(tab => tab.id === ui().active);
-    if (current?.kind === "logs") renderLogs(true);
-  }, 2000);
+  } else if (!logManualPaused) {
+    logPauseUntil = Date.now() + LOG_INTERACTION_PAUSE_MS;
+    logResumeTimer = setTimeout(() => {
+      if (logManualPaused) return;
+      logPauseUntil = 0;
+      logResumeTimer = undefined;
+      syncLogPauseButton();
+      const current = ui().tabs.find(tab => tab.id === ui().active);
+      if (current?.kind === "logs") renderLogs(true);
+    }, LOG_INTERACTION_PAUSE_MS);
+  }
+  syncLogPauseButton();
+}
+function handleLogScroll() {
+  const active = ui().tabs.find(tab => tab.id === ui().active);
+  if (active?.kind !== "logs") return;
+  if ($("#view").scrollTop <= 1) resumeLogUpdates();
+  else pauseLogUpdates("interaction");
+}
+function filteredLogEntries(entries, taskData) {
+  if (!logTaskFilter) return entries;
+  return entries.filter(log => taskData.meta.get(logEntryKey(log))?.sessionId === logTaskFilter);
+}
+function setLogTaskFilter(sessionId) {
+  logTaskFilter = sessionId;
+  logPage = 0;
+  renderLogs(true);
+}
+function changeLogPage(delta) {
+  const entries = state.logs || [];
+  const taskData = buildLogTaskSessions(entries);
+  const filtered = filteredLogEntries(entries, taskData);
+  const pages = Math.max(1, Math.ceil(filtered.length / LOG_PAGE_SIZE));
+  const next = Math.max(0, Math.min(pages - 1, logPage + delta));
+  if (next === logPage) return false;
+  logPage = next;
+  renderLogs(true);
+  return true;
+}
+function handleLogPageKey(event) {
+  const current = ui().tabs.find(tab => tab.id === ui().active);
+  if (current?.kind !== "logs" || !["ArrowLeft", "ArrowRight"].includes(event.key)) return false;
+  const target = event.target;
+  if (target?.isContentEditable || /^(INPUT|TEXTAREA|SELECT)$/.test(target?.tagName || "")) return false;
+  const changed = changeLogPage(event.key === "ArrowLeft" ? -1 : 1);
+  if (changed) event.preventDefault();
+  return changed;
+}
+function logFilterControl(sessions) {
+  const filter = el("details", "log-task-filter");
+  const trigger = el("summary", "log-filter-icon", "⏷");
+  trigger.title = "Filter by main task";
+  trigger.setAttribute("aria-label", "Filter by main task");
+  const menu = el("div", "log-task-filter-menu");
+  const taskButton = (name, count, onClick) => {
+    const item = button("", onClick);
+    item.append(
+      el("span", "log-task-filter-name", name),
+      el("span", "log-task-filter-count", `${count} ${count === 1 ? "call" : "calls"}`),
+    );
+    item.title = name;
+    return item;
+  };
+  const allCount = sessions.reduce((count, session) => count + session.items.length, 0);
+  const all = taskButton("All main tasks", allCount, () => {
+    filter.open = false;
+    setLogTaskFilter(null);
+  });
+  if (!logTaskFilter) all.classList.add("selected");
+  menu.append(all);
+  for (const session of sessions.slice().reverse()) {
+    const item = taskButton(session.name, session.items.length, () => {
+      filter.open = false;
+      setLogTaskFilter(session.id);
+    });
+    if (logTaskFilter === session.id) item.classList.add("selected");
+    menu.append(item);
+  }
+  filter.append(trigger, menu);
+  return filter;
+}
+function renderLogs(force = false) {
+  const v = $("#view");
+  const existing = v.querySelector(".logs");
+  if (existing && !force && logUpdatesPaused()) return;
+  const entries = state.logs || [];
+  const taskData = buildLogTaskSessions(entries);
+  if (logTaskFilter && !taskData.sessions.some(session => session.id === logTaskFilter)) {
+    logTaskFilter = null;
+    logPage = 0;
+  }
+  const filtered = filteredLogEntries(entries, taskData);
+  const pageCount = Math.max(1, Math.ceil(filtered.length / LOG_PAGE_SIZE));
+  logPage = Math.min(logPage, pageCount - 1);
+  const latest = entries.at(-1);
+  const stamp = JSON.stringify([
+    entries.length, latest?.at, latest?.kind, latest?.message, latest?.details,
+    logTaskFilter, logPage, pageCount,
+  ]);
+  if (!force && existing?.dataset.stamp === stamp) return;
+  const oldHeight = v.scrollHeight, oldTop = v.scrollTop;
+  const pause = button(logUpdatesPaused() ? "Resume" : "Pause", () => {
+    if (logUpdatesPaused()) resumeLogUpdates();
+    else pauseLogUpdates("manual");
+  }, "log-pause");
+  const refresh = button("Refresh", async () => {
+    await poll();
+    if (!logUpdatesPaused()) renderLogs(true);
+  });
+  const newer = button("‹", () => changeLogPage(-1), "log-page-button");
+  newer.title = "Newer log page";
+  newer.setAttribute("aria-label", "Newer log page");
+  newer.disabled = logPage === 0;
+  const older = button("›", () => changeLogPage(1), "log-page-button");
+  older.title = "Older log page";
+  older.setAttribute("aria-label", "Older log page");
+  older.disabled = logPage >= pageCount - 1;
+  const pageInfo = el("span", "log-page-info", `${logPage + 1}/${pageCount}`);
+  const selectedSession = taskData.sessions.find(session => session.id === logTaskFilter);
+  const title = selectedSession ? `Backend logs · ${selectedSession.name}` : "Backend logs";
+  const top = toolbar(title, logFilterControl(taskData.sessions), newer, older, pageInfo, pause, refresh);
+  const logs = el("div", "logs");
+  logs.addEventListener("click", () => pauseLogUpdates("interaction"));
+  const newestFirst = filtered.slice().reverse();
+  const page = newestFirst.slice(logPage * LOG_PAGE_SIZE, (logPage + 1) * LOG_PAGE_SIZE);
+  logs.replaceChildren(...(page.length
+    ? page.map(log => renderLogEntry(log, taskData.meta.get(logEntryKey(log))))
+    : [el("p", "muted", "No backend events for this page/filter.")]));
+  logs.dataset.stamp = stamp;
+  v.replaceChildren(top, logs);
+  syncLogPauseButton();
+  if (oldTop > 0 && v.scrollHeight > oldHeight)
+    v.scrollTop = oldTop + (v.scrollHeight - oldHeight);
 }
 function renderFiles() {
   if ($("#view .file-browser")) return;
@@ -1498,7 +1711,11 @@ $("#add-workspace").onclick = guard(async () => {
 });
 $("#settings-nav").onclick = guard(() => openTab("settings", "Settings"));
 $("#logs-nav").onclick = guard(async () => { await openTab("logs", "Logs"); await poll(); });
-$("#view").addEventListener("scroll", pauseLogUpdates, {passive:true});
+$("#service-check-nav").onclick = guard(async () => {
+  await act("service_check_open", {base_url: location.origin});
+  notice("Native Service checker opened.");
+});
+$("#view").addEventListener("scroll", handleLogScroll, {passive:true});
 async function newWebview() {
   const value = await ask("New webview", "Website URL", "https://");
   if (!value) return;
@@ -1512,7 +1729,7 @@ async function newWebview() {
 }
 $("#context").onclick = guard(async () => { await openTab("context", "Context"); await scan(); });
 document.addEventListener("pointerdown", e => { if (!$("#menu").contains(e.target)) $("#menu").hidden = true; });
-document.addEventListener("keydown", e => { if (e.key === "Escape") $("#menu").hidden = true; });
+document.addEventListener("keydown", e => { if (handleLogPageKey(e)) return; if (e.key === "Escape") $("#menu").hidden = true; });
 window.addEventListener("beforeunload", () => {
   peer?.close();
   stream?.getTracks().forEach((t) => t.stop());

@@ -7,6 +7,8 @@ use std::{
 
 const BROWSER_OPEN_URL_DESCRIPTION: &str = "HTTP(S) URL for the new managed Chrome window. Include a purpose query parameter that briefly describes why this window exists and identifies the model, using the template ?purpose=texttodescribepurposeofthiswindow_by_modelname. If the URL already has query parameters, append &purpose=... instead; URL-encode the purpose value.";
 
+const AUTOMATIC_OBSERVATION_DELAY_MS: u64 = 3000;
+
 pub fn definitions() -> Vec<Value> {
     let browser_size = crate::computer::browser_size_schema();
     let mut definitions = vec![
@@ -20,8 +22,8 @@ pub fn definitions() -> Vec<Value> {
         json!({"name":"read_file","description":"Read a workspace UTF-8 file or image. Supports byte offset and limit for text.","parameters":{"type":"object","properties":{"path":{"type":"string"},"offset":{"type":"integer"},"limit":{"type":"integer"}},"required":["path"],"additionalProperties":false}}),
         json!({"name":"write_file","description":"Create or replace a workspace text file. Read existing files before replacing them.","parameters":{"type":"object","properties":{"path":{"type":"string"},"text":{"type":"string"}},"required":["path","text"],"additionalProperties":false}}),
         json!({"name":"list_files","description":"List project files respecting gitignore, with context token estimates.","parameters":{"type":"object","properties":{},"additionalProperties":false}}),
-        json!({"name":"browser_open","description":"Open a new controlled background Chrome window, default 1000 by 600 logical points (fitted to the primary display). Maximum width/height follow the current display, not hard-coded constants. Use project output/ for important artifacts. By default every new window uses the existing persistent Lessagent-managed Chrome profile and reuses its live process when available; a new managed profile is created only when none exists. Cookies/storage persist across browser_open calls while the user's normal Chrome profile stays untouched. Returns window_id, pid and an automatic page screenshot padded to window coordinates (browser toolbar is marked uncaptured); use virtual_pointer/virtual_keyboard with both IDs for subsequent input. Requires computer control enabled. Browser input is delivered through Chrome's local input protocol, never the system pointer.","parameters":{"type":"object","properties":{"url":{"type":"string","description":BROWSER_OPEN_URL_DESCRIPTION},"width":browser_size["width"],"height":browser_size["height"],"capture_path":{"type":"string"}},"required":["url"],"additionalProperties":false}}),
-        json!({"name":"computer","description":"Control the desktop: windows (macOS), screenshot, move, click, drag, type, key, or scroll. For Chrome, first use browser_open (or action browser_open with url). Unmanaged Chrome windows are read-only and reject input. Never substitute the native or system-pointer path when the isolated channel is missing. Controlled browser_open Chrome uses its loopback input protocol and raw page-surface capture. Its uncaptured browser toolbar is a labeled neutral band so window-relative coordinates remain exact, including in Stage Manager; native-window control remains process-directed and never uses the system pointer. Browser chrome/title bars and multi-tab managed windows are not accepted. On macOS ONLY background control is supported: call windows, select window_id and pid, then pass both on every action. Targeted coordinates are relative to the whole window top-left; screenshot the same window first. Background events are posted once to the exact process/window and never move the physical pointer or activate the foreground app. A temporary recipient-local responder may report document focus without bringing the app forward; a light blue virtual pointer turns dark blue while left-pressed or dragging. After 10 seconds idle its fill is transparent with an outline still visible; at 30 seconds it disappears. New input restores it; screenshots do not reset the timer. Every successful input action waits two seconds then automatically captures the target window (or desktop for desktop mode), saves it to output, and returns the image before the next model request. Take an explicit screenshot only for the initial view or to recover from screenshot_error; use automatic observations thereafter. The app must accept background events and the window must be on the current desktop, not minimized. key/type target the app keyboard responder; click the intended input first. scroll needs x,y in background mode. drag may use path:[[x,y],...] for a continuous stroke. On macOS every input requires window_id and pid. Desktop mode is rejected, including explicit requests; there is no global-input fallback. Missing or malformed targets fail without input. Linux X11 retains desktop control. Take a screenshot first when coordinates matter. Screenshot results include the exact screenshot pixel width/height; pass those values as screen_width and screen_height when acting on that image. Lessagent maps screenshot pixels to macOS logical points on Retina displays. A drag normally uses integer x,y,to_x,to_y; a horizontal or vertical drag may omit the unchanged destination axis and Lessagent keeps it at the starting coordinate. from/to or start_x,start_y,end_x,end_y aliases are also accepted and normalized before input is posted. duration is optional seconds (duration_ms is accepted too). key accepts modifier+key (cmd+a on macOS). Scroll at x,y using distance: positive scrolls up (+10 = 10 lines up), negative scrolls down. distance is limited to -100..100. Legacy delta has the opposite sign; supply only one. Desktop scroll may omit both coordinates to use the current pointer. Requires computer control enabled in Settings.","parameters":{"type":"object","properties":{"action":{"type":"string","enum":["windows","screenshot","browser_open","move","click","drag","type","key","scroll"]},"url":{"type":"string","description":BROWSER_OPEN_URL_DESCRIPTION},"width":browser_size["width"],"height":browser_size["height"],"window_id":{"type":"integer","minimum":1},"pid":{"type":"integer","minimum":1},"mode":{"type":"string","enum":if cfg!(target_os = "macos") { json!(["background"]) } else { json!(["desktop"]) },"description":"macOS supports background only, requiring window_id and pid. Desktop is Linux-only and is rejected on macOS."},"capture_path":{"type":"string","description":"Optional workspace-relative path for the screenshot PNG."},"show_pointer":{"type":"boolean"},"path":{"type":"array","minItems":2,"maxItems":512,"items":{"type":"array","items":{"type":"number"},"minItems":2,"maxItems":2}},"x":{"type":"integer"},"y":{"type":"integer"},"to_x":{"type":"integer"},"to_y":{"type":"integer"},"from":{"type":"array","items":{"type":"integer"},"minItems":2,"maxItems":2},"to":{"type":"array","items":{"type":"integer"},"minItems":2,"maxItems":2},"start":{"type":"array","items":{"type":"integer"},"minItems":2,"maxItems":2},"end":{"type":"array","items":{"type":"integer"},"minItems":2,"maxItems":2},"start_x":{"type":"integer"},"start_y":{"type":"integer"},"end_x":{"type":"integer"},"end_y":{"type":"integer"},"target_x":{"type":"integer"},"target_y":{"type":"integer"},"duration":{"type":"number","minimum":0.05,"maximum":5},"duration_ms":{"type":"number","minimum":50,"maximum":5000},"screen_width":{"type":"integer"},"screen_height":{"type":"integer"},"button":{"type":"string","enum":["left","right"]},"text":{"type":"string"},"key":{"type":"string"},"distance":{"type":"integer","minimum":-100,"maximum":100,"description":"Lines: positive up, negative down; exclusive with legacy delta."},"delta":{"type":"integer","description":"Legacy lines: positive down, negative up."}},"required":["action"],"additionalProperties":false}}),
+        json!({"name":"browser_open","description":"Open a new controlled background Chrome window, default 1000 by 600 logical points (fitted to the primary display). Maximum width/height follow the current display, not hard-coded constants. Use project output/ for important artifacts. By default every new window uses the existing persistent Lessagent-managed Chrome profile and reuses its live process when available; a new managed profile is created only when none exists. Cookies/storage persist across browser_open calls while the user's normal Chrome profile stays untouched. Returns window_id, pid and an automatic page screenshot padded to window coordinates (browser toolbar is marked uncaptured); use virtual_pointer/virtual_keyboard with both IDs for subsequent input. Requires computer control enabled. Browser input is delivered through Chrome's local input protocol, never the system pointer.","parameters":{"type":"object","properties":{"url":{"type":"string","description":BROWSER_OPEN_URL_DESCRIPTION},"width":browser_size["width"],"height":browser_size["height"],"new_profile":{"type":"boolean","default":false,"description":"False/default reuses the persistent Lessagent-managed profile; true explicitly starts a separate blank managed profile."},"capture_path":{"type":"string"}},"required":["url"],"additionalProperties":false}}),
+        json!({"name":"computer","description":"Control the desktop: windows (macOS), screenshot, move, click, drag, type, key, or scroll. For Chrome, first use browser_open (or action browser_open with url). Unmanaged Chrome windows are read-only and reject input. Never substitute the native or system-pointer path when the isolated channel is missing. Controlled browser_open Chrome uses its loopback input protocol and raw page-surface capture. Its uncaptured browser toolbar is a labeled neutral band so window-relative coordinates remain exact, including in Stage Manager; native-window control remains process-directed and never uses the system pointer. Browser chrome/title bars and multi-tab managed windows are not accepted. On macOS ONLY background control is supported: call windows, select window_id and pid, then pass both on every action. Targeted coordinates are relative to the whole window top-left; screenshot the same window first. Background events are posted once to the exact process/window and never move the physical pointer or activate the foreground app. A temporary recipient-local responder may report document focus without bringing the app forward; a light blue virtual pointer turns dark blue while left-pressed or dragging. After 10 seconds idle its fill is transparent with an outline still visible; at 30 seconds it disappears. New input restores it; screenshots do not reset the timer. Every successful input action waits three seconds then automatically captures the target window (or desktop for desktop mode), saves it to output, and returns the image before the next model request. Take an explicit screenshot only for the initial view or to recover from screenshot_error; use automatic observations thereafter. The app must accept background events and the window must be on the current desktop, not minimized. key/type target the app keyboard responder; click the intended input first. scroll needs x,y in background mode. drag may use path:[[x,y],...] for a continuous stroke. On macOS every input requires window_id and pid. Desktop mode is rejected, including explicit requests; there is no global-input fallback. Missing or malformed targets fail without input. Linux X11 retains desktop control. Take a screenshot first when coordinates matter. Screenshot results include the exact screenshot pixel width/height; pass those values as screen_width and screen_height when acting on that image. Lessagent maps screenshot pixels to macOS logical points on Retina displays. A drag normally uses integer x,y,to_x,to_y; a horizontal or vertical drag may omit the unchanged destination axis and Lessagent keeps it at the starting coordinate. from/to or start_x,start_y,end_x,end_y aliases are also accepted and normalized before input is posted. duration is optional seconds (duration_ms is accepted too). key accepts modifier+key (cmd+a on macOS). Scroll at x,y using distance: positive scrolls up (+10 = 10 lines up), negative scrolls down. distance is limited to -100..100. Legacy delta has the opposite sign; supply only one. Desktop scroll may omit both coordinates to use the current pointer. Requires computer control enabled in Settings.","parameters":{"type":"object","properties":{"action":{"type":"string","enum":["windows","screenshot","browser_open","move","click","drag","type","key","scroll"]},"url":{"type":"string","description":BROWSER_OPEN_URL_DESCRIPTION},"width":browser_size["width"],"height":browser_size["height"],"new_profile":{"type":"boolean","default":false,"description":"False/default reuses the persistent Lessagent-managed profile; true explicitly starts a separate blank managed profile."},"window_id":{"type":"integer","minimum":1},"pid":{"type":"integer","minimum":1},"mode":{"type":"string","enum":if cfg!(target_os = "macos") { json!(["background"]) } else { json!(["desktop"]) },"description":"macOS supports background only, requiring window_id and pid. Desktop is Linux-only and is rejected on macOS."},"capture_path":{"type":"string","description":"Optional workspace-relative path for the screenshot PNG."},"show_pointer":{"type":"boolean"},"path":{"type":"array","minItems":2,"maxItems":512,"items":{"type":"array","items":{"type":"number"},"minItems":2,"maxItems":2}},"x":{"type":"integer"},"y":{"type":"integer"},"to_x":{"type":"integer"},"to_y":{"type":"integer"},"from":{"type":"array","items":{"type":"integer"},"minItems":2,"maxItems":2},"to":{"type":"array","items":{"type":"integer"},"minItems":2,"maxItems":2},"start":{"type":"array","items":{"type":"integer"},"minItems":2,"maxItems":2},"end":{"type":"array","items":{"type":"integer"},"minItems":2,"maxItems":2},"start_x":{"type":"integer"},"start_y":{"type":"integer"},"end_x":{"type":"integer"},"end_y":{"type":"integer"},"target_x":{"type":"integer"},"target_y":{"type":"integer"},"duration":{"type":"number","minimum":0.05,"maximum":5},"duration_ms":{"type":"number","minimum":50,"maximum":5000},"screen_width":{"type":"integer"},"screen_height":{"type":"integer"},"button":{"type":"string","enum":["left","right","middle"]},"modifiers":{"type":"array","uniqueItems":true,"items":{"type":"string","enum":["shift","ctrl","alt","cmd"]},"description":"Explicit pointer modifiers; e.g. shift + middle drag pans Blender. Never reads physical key state."},"text":{"type":"string"},"key":{"type":"string"},"distance":{"type":"integer","minimum":-100,"maximum":100,"description":"Lines: positive up, negative down; exclusive with legacy delta."},"delta":{"type":"integer","description":"Legacy lines: positive down, negative up."}},"required":["action"],"additionalProperties":false}}),
     ];
     // Keep the former aggregate schema only as a private seed for the narrow
     // standalone GUI schemas. It is deliberately removed from advertised
@@ -74,7 +76,7 @@ pub fn definitions() -> Vec<Value> {
         }
         definitions.push(json!({"name":name,"description":description,"parameters":{"type":"object","properties":properties,"required":required,"additionalProperties":false}}));
     }
-    definitions.push(json!({"name":"app_open","description":"Open a native macOS application without requesting focus. Blender additionally uses --no-window-focus. A new instance is created by default; new_instance:false reuses exactly one existing window, rejecting ambiguity. Chrome must use browser_open instead. Returns the target and automatic screenshot. Other applications may not honor nonactivation; inspect focus_changed and never silently restore focus or retry.","parameters":{"type":"object","properties":{"app":{"type":"string","minLength":1,"description":"Installed application name, bundle ID, or absolute .app path; not a shell command."},"new_instance":{"type":"boolean","default":true},"capture_path":{"type":"string"}},"required":["app"],"additionalProperties":false}}));
+    definitions.push(json!({"name":"app_open","description":"Open or reuse a native macOS application without requesting focus, using its normal/default profile or session. Blender additionally uses --no-window-focus. A new instance is created by default; prefer new_instance:false for ordinary work to reuse exactly one existing window, rejecting ambiguity. A new instance does not request a fresh profile. Chrome must use browser_open instead. Returns the target and automatic screenshot. Other applications may not honor nonactivation; inspect focus_changed and never silently restore focus or retry.","parameters":{"type":"object","properties":{"app":{"type":"string","minLength":1,"description":"Installed application name, bundle ID, or absolute .app path; not a shell command."},"new_instance":{"type":"boolean","default":true,"description":"False reuses one unambiguous existing window or launches normally if not running; true/default requests another instance, not a fresh profile. Prefer false for ordinary work."},"capture_path":{"type":"string"}},"required":["app"],"additionalProperties":false}}));
     definitions
 }
 
@@ -106,6 +108,7 @@ const POINTER_FIELDS: &[&str] = &[
     "screen_width",
     "screen_height",
     "button",
+    "modifiers",
     "distance",
     "delta",
 ];
@@ -228,7 +231,7 @@ fn loggable_tool_value(tool: &str, key: &str, value: &Value) -> Value {
     if sensitive_log_key(key) {
         return json!("[redacted]");
     }
-    if key == "data" {
+    if matches!(key, "data" | "blob") {
         return json!(format!(
             "[binary/text payload omitted: {} chars]",
             value.as_str().map(|text| text.chars().count()).unwrap_or(0)
@@ -271,6 +274,10 @@ fn loggable_tool_value(tool: &str, key: &str, value: &Value) -> Value {
     }
 }
 
+pub(crate) fn tool_log_output(name: &str, value: &Value) -> Value {
+    loggable_tool_value(name, "output", value)
+}
+
 pub(crate) fn tool_log_details(name: &str, args: &Value) -> Value {
     let arguments = args
         .as_object()
@@ -294,6 +301,40 @@ pub async fn execute(app: Arc<App>, workspace: &str, name: &str, args: &Value) -
         &format!("{name} · {}", w.name),
         Some(tool_log_details(name, args)),
     );
+    execute_inner(app, workspace, name, args, w).await
+}
+
+pub(crate) async fn execute_mcp(
+    app: Arc<App>,
+    workspace: &str,
+    name: &str,
+    args: &Value,
+    metadata: Value,
+) -> Result<Value> {
+    let w = app.workspace(workspace)?;
+    let mut details = tool_log_details(name, args);
+    if let (Some(target), Some(metadata)) = (details.as_object_mut(), metadata.as_object()) {
+        for (key, value) in metadata {
+            target.insert(key.clone(), value.clone());
+        }
+    }
+    let log_id = app.log_with_details_id("tool", &format!("{name} · {}", w.name), Some(details));
+    let result = execute_inner(app.clone(), workspace, name, args, w).await;
+    let patch = match &result {
+        Ok(value) => json!({"output":tool_log_output(name, value)}),
+        Err(error) => json!({"output":{"error":crate::clip(&error.to_string(), 16_000)}}),
+    };
+    app.update_log_details(&log_id, patch);
+    result
+}
+
+async fn execute_inner(
+    app: Arc<App>,
+    workspace: &str,
+    name: &str,
+    args: &Value,
+    w: crate::state::Workspace,
+) -> Result<Value> {
     match name {
         "shell" | "bash" | "python" => {
             let source = string(args, if name == "python" { "code" } else { "command" })?;
@@ -459,7 +500,9 @@ pub async fn execute(app: Arc<App>, workspace: &str, name: &str, args: &Value) -
                     )
                 );
                 if control {
-                    std::thread::sleep(std::time::Duration::from_secs(2));
+                    std::thread::sleep(std::time::Duration::from_millis(
+                        AUTOMATIC_OBSERVATION_DELAY_MS,
+                    ));
                     let mut observation = json!({"action":"screenshot"});
                     for key in ["window_id", "pid", "mode", "show_pointer", "_browser_root"] {
                         if let Some(value) = args.get(key).or_else(|| r.get(key)) {
@@ -483,7 +526,7 @@ pub async fn execute(app: Arc<App>, workspace: &str, name: &str, args: &Value) -
                                 }
                             }
                             r["automatic_screenshot"] = json!(true);
-                            r["observation_delay_ms"] = json!(2000);
+                            r["observation_delay_ms"] = json!(AUTOMATIC_OBSERVATION_DELAY_MS);
                         }
                         Err(error) => {
                             // Input already happened. Preserve that fact so callers do

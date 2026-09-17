@@ -1,4 +1,0 @@
-Installed 29 packages in 49ms
-Debug MCP integration: binary=/Users/ecoo/project/agent/lessagent/target/debug/lessagent, isolated port=58755
-http: all 16 tools, read-first guidance, summary validation/metadata, Bash/Python, PTY input/stop, file/image roundtrips, local agent run/status PASS
-stdio: all 16 tools, read-first guidance, summary validation/metadata, Bash/Python, PTY input/stop, file/image roundtrips, local agent run/status PASS

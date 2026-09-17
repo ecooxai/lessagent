@@ -1,8 +1,0 @@
-    Checking ring v0.17.14
-   Compiling lessagent v0.1.0 (/Users/ecoo/project/agent/lessagent)
-    Checking rustls-webpki v0.103.15
-    Checking rustls v0.23.43
-    Checking tokio-rustls v0.26.5
-    Checking hyper-rustls v0.27.9
-    Checking reqwest v0.12.28
-    Finished `dev` profile [unoptimized + debuginfo] target(s) in 6.55s

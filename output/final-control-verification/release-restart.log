@@ -1,6 +1,0 @@
-Lessagent stopped on port 3210.
-Backend PID: 71278
-Backend log: /Users/ecoo/.local/share/lessagent/server.log
-Remote browser: http://<server-address>:3210/ (password or token required)
-App HTTP port: 3210 — http://127.0.0.1:3210/
-MCP HTTP port: 3210 — http://127.0.0.1:3210/mcp

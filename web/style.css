@@ -568,24 +568,46 @@ footer {
   padding: 9px 0;
 }
 .log-entry:first-child { padding-top: 2px; }
+.log-meta-line {
+  display: block;
+  margin: 0 0 7px 18px;
+  color: var(--text);
+  overflow-wrap: anywhere;
+}
+.log-tool-row { display: flex; align-items: baseline; justify-content: space-between; gap: 12px; min-width: 0; }
+.log-tool-name { font-weight: 750; color: var(--text); }
+.log-tool-meta { color: var(--muted); font-size: 12px; font-weight: 500; text-align: right; overflow-wrap: anywhere; }
+.log-progress-time { color: var(--muted); font-size: 12px; }
+.log-main-task { margin-top: 2px; font-weight: 700; }
+.log-current-task { margin-top: 2px; color: #236b45; }
+.log-call-summary { white-space: pre-wrap; }
 .log-head {
   display: grid;
-  grid-template-columns: 82px 64px minmax(0, 1fr);
+  grid-template-columns: 64px minmax(0, 1fr);
   gap: 10px;
   align-items: baseline;
   min-width: 0;
+  margin-left: 18px;
 }
-.log-time,
-.log-kind { color: var(--muted); }
-.log-kind { font-weight: 650; }
+.log-kind { color: var(--muted); font-weight: 650; }
 .log-message { overflow-wrap: anywhere; }
 .log-summary { cursor: pointer; }
 .log-summary::marker { color: var(--muted); }
 .log-summary .log-head {
   display: inline-grid;
-  width: calc(100% - 18px);
+  width: calc(100% - 36px);
   vertical-align: top;
 }
+.log-task-stats,
+.log-context,
+.log-call-summary {
+  display: block;
+  margin: 5px 0 0 18px;
+  overflow-wrap: anywhere;
+}
+.log-task-stats,
+.log-context { color: var(--muted); font-size: 12px; }
+.log-call-summary { color: #314038; }
 .log-preview {
   display: block;
   margin: 6px 0 0 18px;
@@ -593,6 +615,12 @@ footer {
   font: inherit;
   white-space: pre-wrap;
   overflow-wrap: anywhere;
+}
+.log-output-label {
+  margin: 10px 0 -3px 18px;
+  color: var(--muted);
+  font-size: 12px;
+  font-weight: 650;
 }
 .log-full {
   margin: 9px 0 2px 18px;
@@ -604,6 +632,66 @@ footer {
   overflow-wrap: anywhere;
   max-height: 50vh;
   overflow: auto;
+}
+.log-task-filter { position: relative; flex: 0 0 auto !important; }
+.log-filter-icon {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  min-width: 34px;
+  height: 34px;
+  border: 1px solid var(--line);
+  border-radius: 7px;
+  cursor: pointer;
+  list-style: none;
+  user-select: none;
+}
+.log-filter-icon::-webkit-details-marker { display: none; }
+.log-task-filter[open] .log-filter-icon { background: var(--soft); }
+.log-task-filter-menu {
+  position: absolute;
+  z-index: 40;
+  top: calc(100% + 5px);
+  right: 0;
+  width: min(360px, calc(100vw - 32px));
+  max-height: 55vh;
+  overflow: auto;
+  padding: 6px;
+  border: 1px solid var(--line);
+  border-radius: 9px;
+  background: var(--panel);
+  box-shadow: 0 10px 30px rgba(0, 0, 0, .12);
+}
+.log-task-filter-menu button {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 12px;
+  width: 100%;
+  padding: 8px 9px;
+  border: 0;
+  text-align: left;
+}
+.log-task-filter-name {
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+.log-task-filter-count {
+  flex: 0 0 auto;
+  color: var(--muted);
+  font: 11px/1.2 ui-monospace, monospace;
+  white-space: nowrap;
+}
+.log-task-filter-menu button.selected { font-weight: 700; background: var(--soft); }
+.log-page-button { min-width: 34px; font-size: 20px; line-height: 1; }
+.log-page-info {
+  min-width: 42px;
+  align-self: center;
+  color: var(--muted);
+  font: 12px/1 ui-monospace, monospace;
+  text-align: center;
 }
 dialog {
   border: 1px solid var(--line);
@@ -812,6 +900,8 @@ footer { padding: 5px 18px; border: 0; }
 .login-help { font-size: 13px; line-height: 1.6; overflow-wrap: anywhere; }
 #login-error { color: #c54b4b; margin: 0; }
 body.authenticating > aside, body.authenticating > main { visibility: hidden; }
+#dev-badge { position: fixed; top: 7px; right: 10px; z-index: 1001; padding: 2px 6px; border: 1px solid #f0f6f199; border-radius: 4px; color: #f0f6f1; background: #25372e; font: 10px/1.2 ui-monospace, SFMono-Regular, Menlo, monospace; letter-spacing: .08em; text-transform: uppercase; }
+#dev-badge[hidden] { display: none; }
 
 .folder-picker .browser-toolbar { flex-wrap: wrap; }
 .folder-picker input.browser-path { flex: 1 1 65%; width: auto; padding: 8px; }

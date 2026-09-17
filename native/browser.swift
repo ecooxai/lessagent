@@ -110,7 +110,7 @@ func connectManagedBrowser(_ profile: URL) -> (BrowserConnection, String, Int32)
     return (connection, endpoint, pid)
 }
 func persistentBrowserProfile(_ root: URL) -> (URL, Bool) {
-    let stable = root.appendingPathComponent("profile", isDirectory: true)
+    let stable = root.appendingPathComponent("chrome", isDirectory: true)
     if FileManager.default.fileExists(atPath: stable.path) { return (stable, true) }
     // Upgrade from the old per-window profile layout by adopting the most
     // recently active/modified managed profile rather than throwing its state
@@ -133,6 +133,7 @@ func persistentBrowserProfile(_ root: URL) -> (URL, Bool) {
     }) { return (recent, true) }
     return (stable, false)
 }
+
 
 func openManagedBrowser(_ args: [String: Any]) throws -> [String: Any] {
     guard let text = args["url"] as? String, let url = URL(string: text),
@@ -163,7 +164,13 @@ func openManagedBrowser(_ args: [String: Any]) throws -> [String: Any] {
     // Reuse one Lessagent-managed user-data directory so cookies, storage and
     // sign-in state survive browser_open calls. It remains separate from the
     // user's normal Chrome data directory, which is never debug-enabled.
-    let (profile, profileReused) = persistentBrowserProfile(root)
+    if args["new_profile"] != nil && args["new_profile"] as? Bool == nil {
+        throw Failure("browser_open new_profile must be a boolean")
+    }
+    let newProfile = args["new_profile"] as? Bool ?? false
+    let (profile, profileReused) = newProfile
+        ? (root.appendingPathComponent("profile-" + UUID().uuidString, isDirectory: true), false)
+        : persistentBrowserProfile(root)
     if !profileReused {
         try FileManager.default.createDirectory(at: profile, withIntermediateDirectories: false, attributes: [.posixPermissions: 0o700])
     }
@@ -181,7 +188,7 @@ func openManagedBrowser(_ args: [String: Any]) throws -> [String: Any] {
         try? FileManager.default.removeItem(at: profile.appendingPathComponent("DevToolsActivePort"))
         let launch = Process()
         launch.executableURL = URL(fileURLWithPath: "/usr/bin/open")
-        launch.arguments = ["-g", "-n", "-a", "Google Chrome", "--args", "--user-data-dir=" + profile.path,
+        launch.arguments = ["-g", "-n", "-a", "Google Chrome", "--args", "--user-data-dir=" + profile.path, "--profile-directory=Profile 1",
             "--remote-debugging-address=127.0.0.1", "--remote-debugging-port=0", "--no-startup-window",
             "--no-first-run", "--no-default-browser-check", "--disable-background-networking",
             "--disable-background-timer-throttling", "--disable-backgrounding-occluded-windows", "--disable-renderer-backgrounding"]
@@ -256,9 +263,15 @@ func openManagedBrowser(_ args: [String: Any]) throws -> [String: Any] {
     try JSONEncoder().encode(record).write(to: file, options: .atomic)
     try FileManager.default.setAttributes([.posixPermissions: 0o600], ofItemAtPath: file.path)
     succeeded = true
+    if let previous = (before["frontmost_pid"] as? NSNumber)?.int32Value,
+       previous > 0, previous != pid,
+       NSWorkspace.shared.frontmostApplication?.processIdentifier == pid {
+        _ = NSRunningApplication(processIdentifier: previous)?.activate(options: [.activateIgnoringOtherApps])
+    }
     return ["ok": true, "action": "browser_open", "mode": "background", "window_id": id, "pid": pid,
         "url": url.absoluteString, "delivery": "chrome-devtools", "isolated_profile": true,
-        "persistent_profile": true, "profile_reused": profileReused, "browser_process_reused": browserProcessReused,
+        "persistent_profile": !newProfile, "new_profile": newProfile, "control_available": true,
+        "profile_source": "lessagent-managed", "profile_copied": false, "profile_reused": profileReused, "browser_process_reused": browserProcessReused,
         "before": before, "after": state(), "coordinate_space": "window", "input_events_posted": 0,
         "browser_size": ["requested_width": requestedWidth, "requested_height": requestedHeight,
                          "width": width, "height": height, "maximum_width": maxWidth, "maximum_height": maxHeight,
@@ -341,8 +354,13 @@ func browserControl(_ args: [String: Any], record: ManagedBrowser, window: [Stri
     _ = try call("Emulation.setFocusEmulationEnabled", ["enabled": true])
     defer { _ = try? call("Emulation.setFocusEmulationEnabled", ["enabled": false]) }
     var events = 0
-    let button = args["button"] as? String == "right" ? "right" : "left"
-    let mask = button == "right" ? 2 : 1
+    let button = args["button"] as? String ?? "left"
+    let mask = button == "middle" ? 4 : (button == "right" ? 2 : 1)
+    let pointerModifiers = args["modifiers"] as? [String] ?? []
+    let pointerMods = (pointerModifiers.contains("alt") ? 1 : 0) |
+        (pointerModifiers.contains("ctrl") ? 2 : 0) |
+        (pointerModifiers.contains("cmd") ? 4 : 0) |
+        (pointerModifiers.contains("shift") ? 8 : 0)
     func pointer(_ p: CGPoint?, pressed: Bool = false) {
         let local = p ?? (virtualPointer.windowID == record.windowID ? virtualPointer.local : nil)
         var presentationPoint: CGPoint?
@@ -362,7 +380,7 @@ func browserControl(_ args: [String: Any], record: ManagedBrowser, window: [Stri
     func mouse(_ type: String, _ p: CGPoint, pressed: Bool = false) throws {
         _ = try call("Input.dispatchMouseEvent", ["type": type, "x": p.x, "y": p.y,
             "button": type == "mouseMoved" && !pressed ? "none" : button, "buttons": pressed ? mask : 0,
-            "clickCount": type == "mouseMoved" ? 0 : 1, "modifiers": 0, "pointerType": "pen", "force": pressed ? 1.0 : 0])
+            "clickCount": type == "mouseMoved" ? 0 : 1, "modifiers": pointerMods, "pointerType": "pen", "force": pressed ? 1.0 : 0])
         events += 1
         pointer(CGPoint(x: p.x*zoom+insetX, y: p.y*zoom+insetY), pressed: pressed && button == "left")
     }
@@ -402,16 +420,37 @@ func browserControl(_ args: [String: Any], record: ManagedBrowser, window: [Stri
         }
         try mouse("mouseReleased", last); released = true
     case "type":
-        _ = try call("Input.insertText", ["text": args["text"] as? String ?? ""]); events += 1; pointer(nil)
+        _ = try call("Input.insertText", ["text": args["text"] as? String ?? ""]); events += 1; pointer(nil); keyboardNotice.record("down"); keyboardNotice.record("up"); keyboardNotice.record("click")
     case "key":
         guard let (name, nativeCode, flags) = recipe else { throw Failure("Missing validated key recipe") }
         let named: [String: (String, Int)] = ["enter":("Enter",13),"return":("Enter",13),"tab":("Tab",9),"space":(" ",32),"backspace":("Backspace",8),"escape":("Escape",27),"esc":("Escape",27),"delete":("Delete",46),"home":("Home",36),"end":("End",35),"pageup":("PageUp",33),"pagedown":("PageDown",34),"left":("ArrowLeft",37),"right":("ArrowRight",39),"up":("ArrowUp",38),"down":("ArrowDown",40)]
         let function = name.hasPrefix("f") ? Int(name.dropFirst()).flatMap { (1...20).contains($0) ? $0 : nil } : nil
-        let key = function.map { "F\($0)" } ?? named[name]?.0 ?? (flags.contains(.maskShift) ? name.uppercased() : name)
-        let code = name.count == 1 ? (name.first!.isNumber ? "Digit" : "Key")+name.uppercased() : (name == "space" ? "Space" : key)
-        let vk = function.map { 111 + $0 } ?? named[name]?.1 ?? Int(name.uppercased().utf8.first ?? 0)
+        let punctuation: [String:(String,String,Int)] = [
+            "minus":("-","Minus",189),"-":("-","Minus",189),"equal":("=","Equal",187),"=":("=","Equal",187),
+            "period":(".","Period",190),".":(".","Period",190),"comma":(",","Comma",188),",":(",","Comma",188),
+            "slash":("/","Slash",191),"/":("/","Slash",191),"semicolon":(";","Semicolon",186),";":(";","Semicolon",186),
+            "quote":("'","Quote",222),"'":("'","Quote",222),"leftbracket":("[","BracketLeft",219),"[":("[","BracketLeft",219),
+            "rightbracket":("]","BracketRight",221),"]":("]","BracketRight",221),"backslash":("\\","Backslash",220),"grave":("`","Backquote",192),
+            "numpaddecimal":(".","NumpadDecimal",110),"numpadadd":("+","NumpadAdd",107),"numpadsubtract":("-","NumpadSubtract",109),
+            "numpadmultiply":("*","NumpadMultiply",106),"numpaddivide":("/","NumpadDivide",111),"numpadenter":("Enter","NumpadEnter",13),"numpadequal":("=","NumpadEqual",187)
+        ]
+        let keypad = name.hasPrefix("numpad") && name.count == 7 ? Int(name.suffix(1)) : nil
+        let mapped = punctuation[name]
+        let key: String
+        let code: String
+        let vk: Int
+        if let digit = keypad {
+            key = String(digit); code = "Numpad\(digit)"; vk = 96 + digit
+        } else if let mapped {
+            key = mapped.0; code = mapped.1; vk = mapped.2
+        } else {
+            key = function.map { "F\($0)" } ?? named[name]?.0 ?? (flags.contains(.maskShift) ? name.uppercased() : name)
+            code = name.count == 1 ? (name.first!.isNumber ? "Digit" : "Key")+name.uppercased() : (name == "space" ? "Space" : key)
+            vk = function.map { 111 + $0 } ?? named[name]?.1 ?? Int(name.uppercased().utf8.first ?? 0)
+        }
         let mods = (flags.contains(.maskAlternate) ? 1 : 0) | (flags.contains(.maskControl) ? 2 : 0) | (flags.contains(.maskCommand) ? 4 : 0) | (flags.contains(.maskShift) ? 8 : 0)
         var down: [String: Any] = ["type":"rawKeyDown","key":key,"code":code,"windowsVirtualKeyCode":vk,"nativeVirtualKeyCode":nativeCode,"modifiers":mods]
+        if name.hasPrefix("numpad") { down["location"] = 3; down["isKeypad"] = true }
         if flags.contains(.maskCommand), name == "a" { down["commands"] = ["selectAll"] }
         if flags.contains(.maskCommand), name == "z" { down["commands"] = [flags.contains(.maskShift) ? "redo" : "undo"] }
         if mods == 0 || mods == 8 {
@@ -422,18 +461,26 @@ func browserControl(_ args: [String: Any], record: ManagedBrowser, window: [Stri
         up["type"] = "keyUp"; up.removeValue(forKey: "text"); up.removeValue(forKey: "commands")
         var released = false
         defer { if !released { _ = try? call("Input.dispatchKeyEvent", up) } }
-        _ = try call("Input.dispatchKeyEvent", down); events += 1
-        _ = try call("Input.dispatchKeyEvent", up); events += 1; released = true; pointer(nil)
+        _ = try call("Input.dispatchKeyEvent", down); events += 1; keyboardNotice.record("down")
+        _ = try call("Input.dispatchKeyEvent", up); events += 1; released = true; pointer(nil); keyboardNotice.record("up"); keyboardNotice.record("click")
     case "scroll":
         let p = viewport[0], delta = args["delta"] as? Int ?? 0
         try mouse("mouseMoved", p)
         if delta != 0 {
-            _ = try call("Input.dispatchMouseEvent", ["type":"mouseWheel","x":p.x,"y":p.y,"deltaX":0,"deltaY":delta*40,"modifiers":0,"buttons":0,"button":"none"])
+            _ = try call("Input.dispatchMouseEvent", ["type":"mouseWheel","x":p.x,"y":p.y,"deltaX":0,"deltaY":delta*40,"modifiers":pointerMods,"buttons":0,"button":"none"])
             events += 1
         }
     default: throw Failure("Unsupported browser input action")
     }
     RunLoop.current.run(until: Date(timeIntervalSinceNow: 0.05))
+    // Chrome can promote a visible window while processing synthetic input.
+    // Restore the previously frontmost application so a background action does
+    // not unexpectedly steal the user's focus.
+    if let previous = (before["frontmost_pid"] as? NSNumber)?.int32Value,
+       previous > 0, previous != record.pid,
+       NSWorkspace.shared.frontmostApplication?.processIdentifier == record.pid {
+        _ = NSRunningApplication(processIdentifier: previous)?.activate(options: [.activateIgnoringOtherApps])
+    }
     return ["ok":true,"action":action,"mode":"background","window_id":record.windowID,"pid":record.pid,
         "delivery":"chrome-devtools","native_input_events_posted":0,"input_pointer_type":"pen","input_events_posted":events,
         "coordinate_space":"window","viewport_inset_x":insetX,"viewport_inset_y":insetY,"page_zoom":zoom,

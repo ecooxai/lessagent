@@ -268,6 +268,35 @@ fn validate_common_args(args: &Value) -> Result<()> {
     if !args.is_object() {
         return Err(err("Computer arguments must be an object"));
     }
+    if let Some(modifiers) = args.get("modifiers") {
+        let valid = modifiers.as_array().is_some_and(|values| {
+            values.len() <= 4
+                && values
+                    .iter()
+                    .all(|v| matches!(v.as_str(), Some("shift" | "ctrl" | "alt" | "cmd")))
+                && values
+                    .iter()
+                    .enumerate()
+                    .all(|(i, v)| !values[..i].contains(v))
+        });
+        if !valid
+            || !matches!(
+                args["action"].as_str(),
+                Some("move" | "click" | "drag" | "scroll")
+            )
+        {
+            return Err(err(
+                "Pointer modifiers must be unique shift/ctrl/alt/cmd strings on a pointer action",
+            ));
+        }
+        #[cfg(not(target_os = "macos"))]
+        if modifiers.as_array().is_some_and(|v| !v.is_empty()) {
+            return Err(err(
+                "Explicit pointer modifiers are supported on macOS only",
+            ));
+        }
+    }
+
     if !matches!(
         args["action"].as_str(),
         Some(
@@ -319,6 +348,12 @@ fn validate_common_args(args: &Value) -> Result<()> {
             ));
         }
         validate_browser_size(args, &browser_size_schema())?;
+        if args
+            .get("new_profile")
+            .is_some_and(|value| !value.is_boolean())
+        {
+            return Err(err("browser_open new_profile must be a boolean"));
+        }
         if [
             "window_id",
             "pid",
@@ -348,9 +383,9 @@ fn validate_common_args(args: &Value) -> Result<()> {
         ));
     }
     if let Some(button) = args.get("button")
-        && !matches!(button.as_str(), Some("left" | "right"))
+        && !matches!(button.as_str(), Some("left" | "right" | "middle"))
     {
-        return Err(err("button must be left or right"));
+        return Err(err("button must be left, right or middle"));
     }
     if let Some(show) = args.get("show_pointer")
         && !show.is_boolean()
@@ -484,7 +519,7 @@ fn native_request(args: &Value) -> Result<Value> {
     if helper.is_none() {
         *helper = Some(NativeHelper::start()?);
     }
-    let result = match helper.as_mut().unwrap().exchange(args) {
+    let mut result = match helper.as_mut().unwrap().exchange(args) {
         Ok(result) => result,
         Err(error) => {
             *helper = None;
@@ -498,6 +533,7 @@ fn native_request(args: &Value) -> Result<Value> {
             .as_str()
             .unwrap_or("macOS background input failed")));
     }
+    result["backend_build"] = crate::build_info();
     Ok(result)
 }
 
@@ -790,6 +826,70 @@ mod tests {
     use super::normalize_args;
     use serde_json::json;
 
+    #[cfg(target_os = "macos")]
+    #[test]
+    fn chrome_background_pointer_regression() {
+        if std::env::var_os("CI").is_some()
+            || std::env::var_os("LESSAGENT_SKIP_GUI_TESTS").is_some()
+        {
+            eprintln!("SKIP Chrome GUI regression: CI or LESSAGENT_SKIP_GUI_TESTS is set");
+            return;
+        }
+        let manifest = std::path::Path::new(env!("CARGO_MANIFEST_DIR"));
+        let script = manifest.join("tests/chrome_background_pointer.py");
+        let helper = std::path::Path::new(env!("OUT_DIR")).join("lessagent-computer");
+        let output = std::process::Command::new("python3")
+            .arg(&script)
+            .arg(&helper)
+            .env("PYTHONDONTWRITEBYTECODE", "1")
+            .current_dir(manifest)
+            .output()
+            .expect("python3 must run the Chrome background-pointer regression");
+        if !output.status.success() {
+            panic!(
+                "Chrome background-pointer regression failed\nstdout:\n{}\nstderr:\n{}",
+                String::from_utf8_lossy(&output.stdout),
+                String::from_utf8_lossy(&output.stderr)
+            );
+        }
+        let stdout = String::from_utf8_lossy(&output.stdout);
+        assert!(stdout.contains("\"passed\": true"), "{stdout}");
+        assert!(
+            stdout.contains("\"remote_debugging_delivery\": \"chrome-devtools\""),
+            "{stdout}"
+        );
+        assert!(
+            stdout.contains("\"no_debug_delivery\": \"rejected-before-input\""),
+            "{stdout}"
+        );
+    }
+
+    #[test]
+    fn modeling_pointer_arguments_validate_before_input() {
+        let base = json!({"action":"drag","window_id":4,"pid":5,"x":20,"y":20,"to_x":40,"to_y":40,"button":"middle"});
+        assert!(super::normalize_background_args(&base).is_ok());
+        for modifiers in [
+            json!("shift"),
+            json!(["shift", "shift"]),
+            json!(["unknown"]),
+            json!([1]),
+            json!(null),
+        ] {
+            let mut args = base.clone();
+            args["modifiers"] = modifiers;
+            assert!(super::normalize_background_args(&args).is_err());
+        }
+        #[cfg(target_os = "macos")]
+        {
+            let mut args = base;
+            args["modifiers"] = json!(["shift"]);
+            assert!(super::normalize_background_args(&args).is_ok());
+        }
+        assert!(
+            super::validate_common_args(&json!({"action":"key","key":"a","modifiers":[]})).is_err()
+        );
+    }
+
     #[test]
     fn browser_open_validates_before_launching_any_process() {
         for value in [
@@ -799,13 +899,17 @@ mod tests {
             json!({"action":"browser_open","url":"https://user:secret@example.com"}),
             json!({"action":"browser_open","url":"http://127.0.0.1:4173","width":true}),
             json!({"action":"browser_open","url":"https://example.com","height":600.5}),
+            json!({"action":"browser_open","url":"https://example.com","new_profile":"yes"}),
             json!({"action":"browser_open","url":"https://example.com","width":0}),
             json!({"action":"browser_open","url":"https://example.com","window_id":4,"pid":5}),
         ] {
             assert!(super::validate_common_args(&value).is_err(), "{value}");
         }
-        let value = json!({"action":"browser_open","url":"http://127.0.0.1:4173/","width":1000,"height":750});
+        let value = json!({"action":"browser_open","url":"http://127.0.0.1:4173/","width":1000,"height":750,"new_profile":false});
         assert!(super::validate_common_args(&value).is_ok());
+        let fresh =
+            json!({"action":"browser_open","url":"http://127.0.0.1:4173/","new_profile":true});
+        assert!(super::validate_common_args(&fresh).is_ok());
         assert!(super::macos_background_route(&value).unwrap());
         assert!(super::normalize_background_args(&value).is_ok());
     }
@@ -875,7 +979,7 @@ mod tests {
     fn common_validation_rejects_malformed_fields_before_native_events() {
         let base = json!({"action":"click","window_id":5,"pid":9,"x":20,"y":30});
         for patch in [
-            json!({"button":"middle"}),
+            json!({"button":"invalid"}),
             json!({"button":false}),
             json!({"mode":"auto"}),
             json!({"show_pointer":"false"}),
